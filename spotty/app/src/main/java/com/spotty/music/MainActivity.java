@@ -623,7 +623,7 @@ public final class MainActivity extends Activity {
         String[] instances = new String[] {
                 "https://inv.nadeko.net",
                 "https://invidious.nerdvpn.de",
-                "https://invidious.nerdvpn.de",
+                "https://invidious.f5.si",
                 "https://invidious.tiekoetter.com"
         };
 
