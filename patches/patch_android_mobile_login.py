@@ -64,7 +64,7 @@ replace_once(
     "Interactive Spotify browser launcher",
 )
 
-component = r'''import { useEffect, useState } from 'react';
+component = r'''import { useState } from 'react';
 import { Linking, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useChannel } from '@/core-context';
 import { colors, fonts } from '@/theme';
@@ -77,7 +77,6 @@ export function SpotifyLoginPrompt() {
   const code = message.match(/confirm the code\s+([A-Z0-9-]+)/i)?.[1] ?? null;
   const [dismissed, setDismissed] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => setError(null), [message]);
   const visible = Boolean(url) && dismissed !== message;
 
   const openLogin = () => {
@@ -94,7 +93,7 @@ export function SpotifyLoginPrompt() {
       <View style={styles.backdrop}>
         <View style={styles.card}>
           <Text style={styles.title}>Connect Spotify</Text>
-          <Text style={styles.body}>Open Spotify's pairing page in your phone's browser, enter this code, approve access, then return to Spotatui.</Text>
+          <Text style={styles.body}>Open Spotify&apos;s pairing page in your phone&apos;s browser, enter this code, approve access, then return to Spotatui.</Text>
           {code ? <View style={styles.codeBlock}>
             <Text style={styles.label}>Spotify sign-in code</Text>
             <Text selectable style={styles.code}>{code}</Text>
