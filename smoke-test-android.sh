@@ -136,6 +136,13 @@ for round in 1 2; do
     exit 1
   fi
 
+  if ! grep -Fq 'Spotify sign-in code' "$UI_XML"; then
+    echo "ERROR: Fresh install did not expose a selectable Spotify pairing code in cold-start round ${round}." >&2
+    cat "$UI_XML" >&2 || true
+    grep -Ei 'spotatui|ReactNativeJS|GUI:|WebSocket|FATAL EXCEPTION|error|warn' "$LOGCAT" | tail -n 300 >&2 || true
+    exit 1
+  fi
+
   if grep -A 30 -B 3 -E 'FATAL EXCEPTION|UnsatisfiedLinkError|dlopen failed' "$LOGCAT" | grep -F "$PACKAGE" >/dev/null; then
     echo "ERROR: Fatal Java/native startup error found in Spotatui round ${round}." >&2
     tail -n 300 "$LOGCAT" >&2
