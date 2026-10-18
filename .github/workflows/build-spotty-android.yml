@@ -11,6 +11,8 @@ on:
       - 'spotty/**'
       - '.github/workflows/build-spotty-android.yml'
   workflow_dispatch:
+  schedule:
+    - cron: '23 7 1 * *' # Monthly build, smoke test and release from main
 
 permissions:
   contents: write
@@ -144,6 +146,8 @@ jobs:
             sleep 5
             PID="$(adb shell pidof com.spotty.music || true)"
             adb logcat -d -s AndroidRuntime:E | tee "$GITHUB_WORKSPACE/release-output/emulator-errors.txt"
+            adb shell screencap -p /sdcard/spotty-smoke-test.png
+            adb pull /sdcard/spotty-smoke-test.png "$GITHUB_WORKSPACE/release-output/emulator-smoke-test.png"
             if [[ -z "$PID" ]]; then
               echo "Spotty did not remain running after launch."
               exit 1
@@ -179,7 +183,8 @@ jobs:
           Spotty is a standalone Android music/video discovery app. It does not require Spotify or Spotify Premium.
 
           - YouTube catalog search uses public Invidious instances; selecting a result opens the YouTube link in Morphe YouTube when installed.
-          - Also includes Audius, open-license Internet Archive audio, and free internet radio sources.
+          - Imports playlists from CSV, M3U, or pasted title/artist lists; Spotify link alone cannot reveal protected playlist items.
+          - Includes switchable visual themes, source-aware quality selection, licensed Internet Archive downloads, Audius and free internet radio.
           - Package: com.spotty.music
           - Minimum Android: 8.0 (API 26)
           - Emulator smoke test: passed in this workflow.
