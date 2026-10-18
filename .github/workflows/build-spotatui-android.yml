@@ -112,6 +112,54 @@ jobs:
           path.write_text(json.dumps(config, indent=2) + "\n")
           PY
 
+      - name: Align mobile home helpers with current GUI exports
+        working-directory: spotatui-source/mobile/app
+        run: |
+          set -euo pipefail
+          python3 - <<'PYCODE'
+          from pathlib import Path
+
+          home = Path("src/app/(tabs)/index.tsx")
+          source = home.read_text()
+          old = "import { asksDiscover, greeting, madeForYou, recentAlbums, SHELF_MAX } from '@gui/pagesModel';"
+          new = "import { asksDiscover } from '@gui/pagesModel';\nimport { greeting, madeForYou, recentAlbums, SHELF_MAX } from '@/mobilePagesModel';"
+          if source.count(old) != 1:
+              raise SystemExit("Expected mobile home helper import was not found exactly once; refusing a blind patch.")
+          home.write_text(source.replace(old, new, 1))
+          PYCODE
+
+          cat > src/mobilePagesModel.ts <<'TS'
+          import type { DiscoverPayload } from '@gui/bindings/DiscoverPayload';
+          import type { DiscoverPlaylist } from '@gui/bindings/DiscoverPlaylist';
+          import type { TrackInfo } from '@gui/bindings/TrackInfo';
+
+          /** Maximum number of cards shown in each horizontally scrolling home shelf. */
+          export const SHELF_MAX = 10;
+
+          /** A time-of-day greeting, kept local to the mobile Home screen. */
+          export function greeting(hour: number): string {
+            if (hour < 12) return 'Good morning';
+            if (hour < 18) return 'Good afternoon';
+            return 'Good evening';
+          }
+
+          /** Flatten Made For You shelves while preserving server-provided order. */
+          export function madeForYou(discover: DiscoverPayload | null): DiscoverPlaylist[] {
+            return (discover?.shelves ?? []).flatMap((shelf) => shelf.playlists);
+          }
+
+          /** Recent album cards: the first track per album wins, most recent first. */
+          export function recentAlbums(tracks: TrackInfo[]): TrackInfo[] {
+            const seen = new Set<string>();
+            return tracks.filter((track) => {
+              const albumId = track.album_id;
+              if (!albumId || seen.has(albumId)) return false;
+              seen.add(albumId);
+              return true;
+            });
+          }
+          TS
+
       - name: Prevent an indefinite font-loading splash
         working-directory: spotatui-source/mobile/app
         run: |
