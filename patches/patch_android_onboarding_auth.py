@@ -40,7 +40,7 @@ start = source.index(start_marker)
 end = source.index(end_marker, start)
 transcript_component = """function Transcript({ text }: { text: string }) {
   const [openError, setOpenError] = useState<string | null>(null);
-  const parts = text.split(/(https?:\\\\/\\\\/\\\\S+)/);
+  const parts = text.split(/(https?:\\/\\/\\S+)/);
   const spotifyUrl = parts.find(
     (part, index) => index % 2 === 1 && isSpotifyAuthUrl(part),
   );
@@ -99,7 +99,7 @@ function isSpotifyAuthUrl(url: string): boolean {
   }
 }
 """
-source = source.slice(0, start) + transcript_component + source.slice(end)
+source = source[:start] + transcript_component + source[end:]
 
 replace_once(
   "  transcript: { fontFamily: fonts.mono, fontSize: 12, lineHeight: 18, color: colors.muted },\n  link: { color: colors.accent, textDecorationLine: 'underline' },\n  question: { gap: 12 },",
