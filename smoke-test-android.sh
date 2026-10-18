@@ -111,6 +111,22 @@ for round in 1 2; do
     exit 1
   fi
 
+  if grep -Eqi 'text="(Connecting…|Starting spotatui…|Spotatui could not reach its local core)' "$UI_XML"; then
+    echo "ERROR: Spotatui remained in an unresolved startup/connection state in cold-start round ${round}." >&2
+    cat "$UI_XML" >&2 || true
+    grep -Ei 'spotatui|ReactNativeJS|GUI:|WebSocket|preflight|FATAL EXCEPTION|error|warn' "$LOGCAT" | tail -n 300 >&2 || true
+    exit 1
+  fi
+
+  if ! grep -Eqi 'text="(Yes|No|Continue|Home|Search|Your Library|Liked Songs|SPOTIFY|Log in|Login)' "$UI_XML"; then
+    echo "ERROR: Spotatui is foregrounded but neither a known healthy onboarding nor home-screen marker was found in cold-start round ${round}." >&2
+    echo "--- UI hierarchy ---" >&2
+    cat "$UI_XML" >&2 || true
+    echo "--- Recent application diagnostics ---" >&2
+    grep -Ei 'spotatui|ReactNativeJS|GUI:|WebSocket|preflight|FATAL EXCEPTION|error|warn' "$LOGCAT" | tail -n 300 >&2 || true
+    exit 1
+  fi
+
   if grep -A 30 -B 3 -E 'FATAL EXCEPTION|UnsatisfiedLinkError|dlopen failed' "$LOGCAT" | grep -F "$PACKAGE" >/dev/null; then
     echo "ERROR: Fatal Java/native startup error found in Spotatui round ${round}." >&2
     tail -n 300 "$LOGCAT" >&2
@@ -128,7 +144,7 @@ for round in 1 2; do
     tail -n 300 "$LOGCAT" >&2
     exit 1
   fi
-  echo "Cold-start test ${round} passed using ${launch_method}; connection error UI not detected."
+  echo "Cold-start test ${round} passed using ${launch_method}; a known healthy onboarding/home UI was detected."
 done
 
-echo 'Both Spotatui cold-start smoke tests passed without the known core-connection error.'
+echo 'Both Spotatui cold-start smoke tests passed with known healthy UI markers and no core-connection error.'
