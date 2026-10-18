@@ -536,7 +536,7 @@ jobs:
           retention-days: 14
 
       - name: Publish signed Android update release
-        if: success() && steps.signing.outputs.available == 'true'
+        if: success() && steps.signing.outputs.available == 'true' && github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
