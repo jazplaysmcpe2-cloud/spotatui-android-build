@@ -151,6 +151,7 @@ jobs:
         run: python3 workflow-files/patches/patch_android_search_feedback.py "$GITHUB_WORKSPACE/spotatui-source"
       - name: Make Android Spotify device authorization explicit
         run: python3 workflow-files/patches/patch_android_onboarding_auth.py "$GITHUB_WORKSPACE/spotatui-source"
+        # The smoke test validates the CTA and the selectable pairing code on a fresh install.
 
       - name: Install native Stats screen and tab
         run: |
