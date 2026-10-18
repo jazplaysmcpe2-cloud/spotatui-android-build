@@ -1,0 +1,112 @@
+
+name: Build Spotatui Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/build-spotatui-android.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Get official Spotatui source
+        uses: actions/checkout@v4
+        with:
+          repository: LargeModGames/spotatui
+          ref: main
+          path: spotatui-source
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: spotatui-source/mobile/app/package-lock.json
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK and NDK
+        run: |
+          yes | sdkmanager --licenses >/dev/null
+          sdkmanager --install \
+            "platform-tools" \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
+            "ndk;27.1.12297006"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.1.12297006" >> "$GITHUB_ENV"
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --locked
+
+      - name: Build native Android core
+        working-directory: spotatui-source/mobile/core
+        run: |
+          cargo ndk -t arm64-v8a -P 26 \
+            -o ../app/modules/spotatui-core/android/src/main/jniLibs \
+            build --locked
+
+      - name: Install app dependencies
+        working-directory: spotatui-source/mobile/app
+        run: npm ci
+
+      - name: Configure for Android phones
+        working-directory: spotatui-source/mobile/app
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path("app.json")
+          config = json.loads(path.read_text())
+          config["expo"].setdefault("android", {})["usesCleartextTraffic"] = True
+
+          for plugin in config["expo"].get("plugins", []):
+              if (isinstance(plugin, list) and len(plugin) > 1
+                      and plugin[0] == "expo-build-properties"
+                      and isinstance(plugin[1], dict)):
+                  plugin[1].setdefault("android", {})["buildArchs"] = ["arm64-v8a"]
+
+          path.write_text(json.dumps(config, indent=2) + "\n")
+          PY
+
+      - name: Generate Android project
+        working-directory: spotatui-source/mobile/app
+        run: npx expo prebuild --platform android --no-install
+
+      - name: Build APK
+        working-directory: spotatui-source/mobile/app/android
+        run: ./gradlew --no-daemon :app:assembleDebug
+
+      - name: Verify APK
+        run: |
+          APK="spotatui-source/mobile/app/android/app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$APK"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify "$APK"
+
+      - name: Save APK for download
+        uses: actions/upload-artifact@v4
+        with:
+          name: spotatui-android-apk
+          path: spotatui-source/mobile/app/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 7
+          
