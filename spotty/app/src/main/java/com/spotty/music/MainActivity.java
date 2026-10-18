@@ -512,6 +512,15 @@ public final class MainActivity extends Activity {
         }
         for (String line : lines) {
             String value = line.trim();
+            if (value.startsWith("#EXTINF:")) {
+                int comma = value.indexOf(',');
+                if (comma >= 0 && comma + 1 < value.length()) {
+                    String extInfo = value.substring(comma + 1).trim();
+                    String[] extPair = extInfo.split("\\s+[—–-]\\s+", 2);
+                    addImportedTrack(found, extPair[0].trim(), extPair.length > 1 ? extPair[1].trim() : "Unknown artist");
+                }
+                continue;
+            }
             if (value.isEmpty() || value.startsWith("#") || value.toLowerCase(Locale.ROOT).startsWith("http")) continue;
             List<String> cells = parseCsvLine(value);
             String title = "", artist = "Unknown artist";
@@ -933,7 +942,7 @@ public final class MainActivity extends Activity {
         return lossless ? 90 : -1;
     }
 
-    private JSONObject chooseArchiveAudioFile(JSONArray files) {
+    private JSONObject chooseArchiveAudioFile(JSONArray files, boolean forPlayback) {
         JSONObject best = null;
         int bestRank = -1;
         long bestSize = -1;
@@ -942,6 +951,8 @@ public final class MainActivity extends Activity {
             if (file == null || file.optBoolean("private", false)) continue;
             String name = file.optString("name", "");
             int rank = audioFileRank(name);
+            String lowerName = name.toLowerCase(Locale.ROOT);
+            if (forPlayback && (lowerName.endsWith(".aiff") || lowerName.endsWith(".alac"))) rank = -1;
             long size = file.optLong("size", 0L);
             if (rank > bestRank || (rank == bestRank && size > bestSize)) {
                 best = file; bestRank = rank; bestSize = size;
@@ -985,7 +996,7 @@ public final class MainActivity extends Activity {
                     throw new Exception("This item has no verifiable Creative Commons/public-domain license. Download blocked.");
                 JSONArray files = response.optJSONArray("files");
                 if (files == null) throw new Exception("No downloadable files were listed.");
-                JSONObject chosen = chooseArchiveAudioFile(files);
+                JSONObject chosen = chooseArchiveAudioFile(files, true);
                 if (chosen == null) throw new Exception("No supported audio file was found.");
                 String name = chosen.optString("name", "");
                 String url = chooseArchiveStreamUrl(track.id, name);
