@@ -1,0 +1,72 @@
+name: Validate Android build scripts and workflows
+
+on:
+  push:
+    paths:
+      - ".github/workflows/**"
+      - "patches/**"
+      - "tools/**"
+      - "templates/**"
+      - "smoke-test-android.sh"
+  pull_request:
+    paths:
+      - ".github/workflows/**"
+      - "patches/**"
+      - "tools/**"
+      - "templates/**"
+      - "smoke-test-android.sh"
+
+permissions:
+  contents: read
+
+jobs:
+  static-checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+
+      - name: Check workflow YAML syntax
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check PyYAML
+          python - <<'PY'
+          from pathlib import Path
+          import yaml
+
+          files = sorted(Path(".github/workflows").glob("*.yml")) + sorted(Path(".github/workflows").glob("*.yaml"))
+          if not files:
+              raise SystemExit("No GitHub Actions workflow files found.")
+          for path in files:
+              parsed = yaml.safe_load(path.read_text(encoding="utf-8"))
+              if not isinstance(parsed, dict):
+                  raise SystemExit(f"{path}: expected a YAML mapping at the top level")
+              print(f"Valid YAML syntax: {path}")
+          PY
+
+      - name: Compile all Python build patches and tools
+        run: |
+          set -euo pipefail
+          python -m py_compile patches/*.py tools/*.py
+
+      - name: Parse Android emulator smoke-test script
+        run: bash -n smoke-test-android.sh
+
+      - name: Check release branch guard and bounded triage policy
+        run: |
+          set -euo pipefail
+          grep -Fq "github.ref == 'refs/heads/main'" .github/workflows/build-spotatui-android.yml
+          grep -Fq "github.rest.actions.reRunWorkflowFailedJobs" .github/workflows/spotatui-build-failure-triage.yml
+          grep -Fq "if: contains(fromJSON" .github/workflows/spotatui-build-failure-triage.yml
+          grep -Fq "Open Spotify sign-in in browser" patches/patch_android_onboarding_auth.py
+          grep -Fq "Spotify sign-in code" patches/patch_android_onboarding_auth.py
+          grep -Fq "Fresh install did not expose a selectable Spotify pairing code" smoke-test-android.sh
+          echo "Release guard, bounded triage, and Android onboarding smoke gates are present."
