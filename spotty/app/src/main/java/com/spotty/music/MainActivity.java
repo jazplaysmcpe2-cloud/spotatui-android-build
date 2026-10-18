@@ -1044,7 +1044,8 @@ public final class MainActivity extends Activity {
                         if (safeName.isEmpty()) safeName = "Spotty_audio";
                         int dot = name.lastIndexOf('.');
                         String ext = dot >= 0 ? name.substring(dot) : ".audio";
-                        request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "Spotty/" + safeName + ext);
+                        request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, safeName + ext);
+                        request.allowScanningByMediaScanner();
                         manager.enqueue(request);
                         statusText.setText("Download queued • " + quality);
                     } catch (Exception e) {
