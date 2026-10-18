@@ -996,7 +996,7 @@ public final class MainActivity extends Activity {
                     throw new Exception("This item has no verifiable Creative Commons/public-domain license. Download blocked.");
                 JSONArray files = response.optJSONArray("files");
                 if (files == null) throw new Exception("No downloadable files were listed.");
-                JSONObject chosen = chooseArchiveAudioFile(files, true);
+                JSONObject chosen = chooseArchiveAudioFile(files, false);
                 if (chosen == null) throw new Exception("No supported audio file was found.");
                 String name = chosen.optString("name", "");
                 String url = chooseArchiveStreamUrl(track.id, name);
@@ -1052,7 +1052,7 @@ public final class MainActivity extends Activity {
                     if (!allowed) throw new Exception("No verifiable Creative Commons/public-domain license was found. This item will not be played.");
                     JSONArray files = response.optJSONArray("files");
                     if (files == null) throw new Exception("This archive item has no accessible files.");
-                    JSONObject chosen = chooseArchiveAudioFile(files);
+                    JSONObject chosen = chooseArchiveAudioFile(files, true);
                     if (chosen == null) throw new Exception("No supported public audio file was found for this item.");
                     String selected = chosen.optString("name", "");
                     String stream = chooseArchiveStreamUrl(track.id, selected);
