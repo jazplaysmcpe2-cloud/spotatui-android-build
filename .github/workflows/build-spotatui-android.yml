@@ -149,6 +149,8 @@ jobs:
         run: python3 workflow-files/patches/patch_android_loopback_diagnostics.py "$GITHUB_WORKSPACE/spotatui-source"
       - name: Add Android Spotify search timeout and reconnect controls
         run: python3 workflow-files/patches/patch_android_search_feedback.py "$GITHUB_WORKSPACE/spotatui-source"
+      - name: Make Android Spotify device authorization explicit
+        run: python3 workflow-files/patches/patch_android_onboarding_auth.py "$GITHUB_WORKSPACE/spotatui-source"
 
       - name: Install native Stats screen and tab
         run: |
