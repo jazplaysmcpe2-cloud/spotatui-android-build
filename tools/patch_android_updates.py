@@ -87,7 +87,11 @@ function AndroidUpdatePanel() {
   }, [installedBuild]);
 
   useEffect(() => {
-    void check();
+    // Defer the initial network check so updates are not scheduled synchronously during commit.
+    const timer = setTimeout(() => {
+      void check();
+    }, 0);
+    return () => clearTimeout(timer);
   }, [check]);
 
   const download = async () => {
