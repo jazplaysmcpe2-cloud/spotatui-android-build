@@ -1,6 +1,8 @@
 package com.spotty.music;
 
 import android.app.Activity;
+import android.app.AlertDialog;
+import android.app.DownloadManager;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -8,12 +10,14 @@ import android.media.AudioAttributes;
 import android.media.MediaPlayer;
 import android.os.Bundle;
 import android.os.Handler;
+import android.os.Environment;
 import android.os.Looper;
 import android.view.Gravity;
 import android.view.View;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
 import android.content.Context;
+import android.content.SharedPreferences;
 import android.content.Intent;
 import android.net.Uri;
 import android.widget.Button;
@@ -45,12 +49,16 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 public final class MainActivity extends Activity {
-    private static final int BG = Color.rgb(12, 15, 14);
-    private static final int PANEL = Color.rgb(26, 31, 29);
-    private static final int PANEL_ALT = Color.rgb(35, 41, 38);
-    private static final int TEXT = Color.rgb(245, 246, 242);
-    private static final int MUTED = Color.rgb(162, 171, 165);
-    private static final int ACCENT = Color.rgb(133, 235, 158);
+    private int BG, PANEL, PANEL_ALT, TEXT, MUTED, ACCENT;
+    private static final int REQUEST_PLAYLIST_FILE = 7234;
+    private static final String PREFS = "spotty_preferences";
+    private static final String[] THEME_NAMES = {
+            "Frutiger Aero", "Midwest Emo", "Synthwave", "Vaporwave",
+            "Cyberpunk", "Aurora Forest", "AMOLED"
+    };
+    private static final String[] QUALITY_NAMES = {
+            "Best available", "Prefer lossless", "Balanced (prefer high bitrate)", "Data saver"
+    };
 
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ExecutorService io = Executors.newFixedThreadPool(6);
@@ -67,15 +75,22 @@ public final class MainActivity extends Activity {
     private boolean preparing;
     private Track currentTrack;
     private final List<Track> visibleTracks = new ArrayList<>();
+    private final List<Track> playlistTracks = new ArrayList<>();
+    private String activeTheme = "Frutiger Aero";
+    private String activeQuality = "Best available";
 
     @Override
     public void onCreate(Bundle state) {
         super.onCreate(state);
+        applyThemeFromPreferences();
+        String savedPlaylist = getSharedPreferences(PREFS, MODE_PRIVATE).getString("imported_playlist_text", "");
+        if (!savedPlaylist.trim().isEmpty()) playlistTracks.addAll(parsePlaylistTracks(savedPlaylist));
         getWindow().setStatusBarColor(BG);
         getWindow().setNavigationBarColor(BG);
         getWindow().getDecorView().setSystemUiVisibility(0);
         buildUi();
         loadCurrentSource("");
+        checkForUpdatesIfDue(false);
     }
 
     private void buildUi() {
@@ -125,6 +140,7 @@ public final class MainActivity extends Activity {
         sourceRow.addView(sourceButton("Audius", "audius"));
         sourceRow.addView(sourceButton("Open Archive", "archive"));
         sourceRow.addView(sourceButton("Radio", "radio"));
+        sourceRow.addView(sourceButton("Playlists", "playlist"));
         sourceScroller.addView(sourceRow);
         screen.addView(sourceScroller, new LinearLayout.LayoutParams(-1, dp(44)));
 
@@ -157,6 +173,27 @@ public final class MainActivity extends Activity {
         LinearLayout.LayoutParams searchLp = new LinearLayout.LayoutParams(-1, -2);
         searchLp.topMargin = dp(12);
         screen.addView(searchRow, searchLp);
+
+        LinearLayout utilityRow = new LinearLayout(this);
+        utilityRow.setOrientation(LinearLayout.HORIZONTAL);
+        utilityRow.setGravity(Gravity.CENTER_VERTICAL);
+        String[] utilityLabels = {"Import playlist", "Themes", "Settings"};
+        View.OnClickListener[] utilityActions = {
+                v -> showPlaylistImportDialog(),
+                v -> showThemeDialog(),
+                v -> showSettingsDialog()
+        };
+        for (int i = 0; i < utilityLabels.length; i++) {
+            Button utility = button(utilityLabels[i], PANEL_ALT, TEXT);
+            utility.setTextSize(11);
+            utility.setOnClickListener(utilityActions[i]);
+            LinearLayout.LayoutParams utilityLp = new LinearLayout.LayoutParams(0, dp(40), 1);
+            utilityLp.rightMargin = i < utilityLabels.length - 1 ? dp(7) : 0;
+            utilityRow.addView(utility, utilityLp);
+        }
+        LinearLayout.LayoutParams utilityLp = new LinearLayout.LayoutParams(-1, -2);
+        utilityLp.topMargin = dp(8);
+        screen.addView(utilityRow, utilityLp);
 
         HorizontalScrollView genreScroll = new HorizontalScrollView(this);
         genreScroll.setHorizontalScrollBarEnabled(false);
@@ -262,6 +299,264 @@ public final class MainActivity extends Activity {
         }
     }
 
+    private void applyThemeFromPreferences() {
+        SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
+        activeTheme = prefs.getString("theme", "Frutiger Aero");
+        activeQuality = prefs.getString("quality", "Best available");
+        switch (activeTheme) {
+            case "Midwest Emo":
+                BG = Color.rgb(23, 20, 30); PANEL = Color.rgb(43, 36, 49);
+                PANEL_ALT = Color.rgb(66, 52, 71); TEXT = Color.rgb(248, 237, 235);
+                MUTED = Color.rgb(190, 169, 183); ACCENT = Color.rgb(237, 164, 202); break;
+            case "Synthwave":
+                BG = Color.rgb(20, 10, 40); PANEL = Color.rgb(39, 21, 67);
+                PANEL_ALT = Color.rgb(59, 32, 92); TEXT = Color.rgb(255, 242, 255);
+                MUTED = Color.rgb(200, 169, 224); ACCENT = Color.rgb(255, 82, 211); break;
+            case "Vaporwave":
+                BG = Color.rgb(25, 23, 54); PANEL = Color.rgb(43, 40, 83);
+                PANEL_ALT = Color.rgb(64, 57, 112); TEXT = Color.rgb(248, 243, 255);
+                MUTED = Color.rgb(193, 184, 234); ACCENT = Color.rgb(95, 239, 236); break;
+            case "Cyberpunk":
+                BG = Color.rgb(7, 15, 18); PANEL = Color.rgb(17, 31, 38);
+                PANEL_ALT = Color.rgb(31, 51, 59); TEXT = Color.rgb(244, 252, 255);
+                MUTED = Color.rgb(160, 185, 191); ACCENT = Color.rgb(236, 255, 0); break;
+            case "Aurora Forest":
+                BG = Color.rgb(8, 29, 27); PANEL = Color.rgb(17, 54, 49);
+                PANEL_ALT = Color.rgb(30, 79, 68); TEXT = Color.rgb(238, 255, 247);
+                MUTED = Color.rgb(164, 208, 190); ACCENT = Color.rgb(120, 255, 180); break;
+            case "AMOLED":
+                BG = Color.BLACK; PANEL = Color.rgb(17, 17, 21);
+                PANEL_ALT = Color.rgb(35, 35, 42); TEXT = Color.WHITE;
+                MUTED = Color.rgb(170, 170, 180); ACCENT = Color.rgb(133, 235, 158); break;
+            case "Frutiger Aero":
+            default:
+                activeTheme = "Frutiger Aero";
+                BG = Color.rgb(8, 31, 47); PANEL = Color.rgb(19, 68, 83);
+                PANEL_ALT = Color.rgb(28, 104, 121); TEXT = Color.rgb(244, 255, 255);
+                MUTED = Color.rgb(166, 220, 229); ACCENT = Color.rgb(104, 246, 204); break;
+        }
+    }
+
+    private void showThemeDialog() {
+        int selected = 0;
+        for (int i = 0; i < THEME_NAMES.length; i++) if (THEME_NAMES[i].equals(activeTheme)) selected = i;
+        new AlertDialog.Builder(this)
+                .setTitle("Choose your Spotty universe")
+                .setSingleChoiceItems(THEME_NAMES, selected, (dialog, which) -> {
+                    getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString("theme", THEME_NAMES[which]).apply();
+                    dialog.dismiss();
+                    recreate();
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+    private void showSettingsDialog() {
+        new AlertDialog.Builder(this)
+                .setTitle("Spotty settings")
+                .setItems(new String[]{"Audio quality preference", "Check for updates now", "About Spotty"}, (dialog, which) -> {
+                    if (which == 0) showQualityDialog();
+                    else if (which == 1) checkForUpdatesIfDue(true);
+                    else new AlertDialog.Builder(this).setTitle("Spotty")
+                            .setMessage("A source-first music and video discovery app. YouTube playback is handed to Morphe/YouTube. Spotty never claims to unlock Spotify Premium or upsample audio beyond the source quality.")
+                            .setPositiveButton("Done", null).show();
+                }).show();
+    }
+
+    private void showQualityDialog() {
+        int selected = 0;
+        for (int i = 0; i < QUALITY_NAMES.length; i++) if (QUALITY_NAMES[i].equals(activeQuality)) selected = i;
+        new AlertDialog.Builder(this)
+                .setTitle("Preferred source quality")
+                .setSingleChoiceItems(QUALITY_NAMES, selected, (dialog, which) -> {
+                    activeQuality = QUALITY_NAMES[which];
+                    getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString("quality", activeQuality).apply();
+                    dialog.dismiss();
+                    statusText.setText("Quality preference saved • source quality is never artificially upsampled");
+                })
+                .setMessage("Spotty selects the best matching file that a licensed source actually offers. 320 kbps or lossless is not guaranteed for every track.")
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+    private void checkForUpdatesIfDue(boolean force) {
+        SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
+        long last = prefs.getLong("last_update_check", 0L);
+        if (!force && System.currentTimeMillis() - last < TimeUnit.DAYS.toMillis(30)) return;
+        statusText.setText("Checking Spotty updates…");
+        io.execute(() -> {
+            try {
+                JSONObject release = requestJsonObject("https://api.github.com/repos/jazplaysmcpe2-cloud/spotatui-android-build/releases/latest");
+                String tag = release.optString("tag_name", "");
+                String name = release.optString("name", "Spotty update");
+                String url = release.optString("html_url", "https://github.com/jazplaysmcpe2-cloud/spotatui-android-build/releases");
+                String body = release.optString("body", "");
+                long now = System.currentTimeMillis();
+                prefs.edit().putLong("last_update_check", now).putString("last_update_tag", tag).apply();
+                String notified = prefs.getString("notified_release_tag", "");
+                main.post(() -> {
+                    statusText.setText("Update check complete • " + (tag.isEmpty() ? "no release tag" : tag));
+                    if (!tag.isEmpty() && !tag.equals(notified)) {
+                        prefs.edit().putString("notified_release_tag", tag).apply();
+                        new AlertDialog.Builder(this).setTitle(name)
+                                .setMessage((body.isEmpty() ? "A newer Spotty build is available." : body) + "\n\nAndroid requires you to confirm installation; Spotty cannot silently install APK updates.")
+                                .setPositiveButton("View release", (d, w) -> {
+                                    try { startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url))); }
+                                    catch (Exception e) { statusText.setText("Could not open release page."); }
+                                }).setNegativeButton("Later", null).show();
+                    }
+                });
+            } catch (Exception e) {
+                main.post(() -> statusText.setText("Update check unavailable • try again in Settings"));
+            }
+        });
+    }
+
+    private void showPlaylistImportDialog() {
+        EditText input = new EditText(this);
+        input.setHint("Paste exported track rows (Title, Artist) or M3U text");
+        input.setTextSize(13);
+        input.setMinLines(5);
+        input.setGravity(Gravity.TOP | Gravity.START);
+        input.setPadding(dp(12), dp(10), dp(12), dp(10));
+        input.setBackground(roundRect(PANEL_ALT, 12));
+        new AlertDialog.Builder(this)
+                .setTitle("Import a playlist")
+                .setMessage("Paste a track list, or choose a Spotify-exported CSV / M3U / text file. A Spotify share URL alone does not grant access to its full track list.")
+                .setView(input)
+                .setPositiveButton("Import text", (d, w) -> importPlaylistText(input.getText().toString()))
+                .setNeutralButton("Choose file", (d, w) -> choosePlaylistFile())
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+    private void choosePlaylistFile() {
+        try {
+            Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+            intent.addCategory(Intent.CATEGORY_OPENABLE);
+            intent.setType("*/*");
+            intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"text/csv", "text/plain", "application/vnd.ms-excel", "audio/x-mpegurl", "application/x-mpegURL"});
+            startActivityForResult(intent, REQUEST_PLAYLIST_FILE);
+        } catch (Exception e) {
+            statusText.setText("Could not open the file picker.");
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != REQUEST_PLAYLIST_FILE || resultCode != RESULT_OK || data == null || data.getData() == null) return;
+        try (InputStream stream = getContentResolver().openInputStream(data.getData());
+             BufferedReader reader = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8))) {
+            StringBuilder contents = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null) contents.append(line).append('\n');
+            importPlaylistText(contents.toString());
+        } catch (Exception e) {
+            showError("Playlist import failed: " + shortError(e));
+        }
+    }
+
+    private void importPlaylistText(String raw) {
+        if (raw == null || raw.trim().isEmpty()) {
+            showError("The playlist text or file is empty.");
+            return;
+        }
+        String trimmed = raw.trim();
+        if (trimmed.matches("(?is)^https?://(open\\.)?spotify\\.com/(playlist|embed/playlist)/[^\\s]+/?([?].*)?$")) {
+            new AlertDialog.Builder(this).setTitle("Spotify link detected")
+                    .setMessage("A Spotify share link identifies the playlist but doesn't expose its complete track list to an unauthenticated third-party app. Export its tracks as CSV or paste the track names here; Spotty will map them to sources you can play.")
+                    .setPositiveButton("Open Spotify", (d, w) -> {
+                        try { startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(trimmed))); } catch (Exception ignored) {}
+                    }).setNeutralButton("Choose CSV", (d, w) -> choosePlaylistFile()).setNegativeButton("Cancel", null).show();
+            return;
+        }
+        List<Track> imported = parsePlaylistTracks(raw);
+        if (imported.isEmpty()) {
+            showError("No track rows found. Use a CSV with Track Name and Artist columns, an M3U/text file, or paste one track per line.");
+            return;
+        }
+        playlistTracks.clear();
+        playlistTracks.addAll(imported);
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString("imported_playlist_text", raw).apply();
+        source = "playlist";
+        refreshSourceButtons(sourceRow);
+        showTracks(playlistTracks, playlistTracks.size() + " imported tracks • tap one to find it on YouTube/Morphe");
+        resultHeading.setText("YOUR IMPORTED PLAYLIST");
+        statusText.setText("Playlist imported and saved on this device");
+    }
+
+    private List<Track> parsePlaylistTracks(String raw) {
+        List<Track> found = new ArrayList<>();
+        if (raw == null) return found;
+        String[] lines = raw.replace("\r", "").split("\n");
+        int titleIndex = -1, artistIndex = -1;
+        if (lines.length > 0) {
+            List<String> header = parseCsvLine(lines[0]);
+            for (int i = 0; i < header.size(); i++) {
+                String h = header.get(i).trim().toLowerCase(Locale.ROOT);
+                if (h.contains("track name") || h.equals("title") || h.equals("song") || h.equals("track")) titleIndex = i;
+                if (h.contains("artist")) artistIndex = i;
+            }
+            if (titleIndex >= 0) {
+                for (String line : lines) {
+                    if (line.trim().isEmpty() || line.trim().startsWith("#")) continue;
+                    List<String> cells = parseCsvLine(line);
+                    if (cells.size() <= titleIndex || line.equals(lines[0])) continue;
+                    String title = cells.get(titleIndex).trim();
+                    String artist = artistIndex >= 0 && cells.size() > artistIndex ? cells.get(artistIndex).trim() : "Unknown artist";
+                    addImportedTrack(found, title, artist);
+                }
+                return found;
+            }
+        }
+        for (String line : lines) {
+            String value = line.trim();
+            if (value.isEmpty() || value.startsWith("#") || value.toLowerCase(Locale.ROOT).startsWith("http")) continue;
+            List<String> cells = parseCsvLine(value);
+            String title = "", artist = "Unknown artist";
+            if (cells.size() >= 2) {
+                title = cells.get(0).trim();
+                artist = cells.get(1).trim();
+            } else {
+                String[] pair = value.split("\\s+[—–-]\\s+", 2);
+                if (pair.length == 2) { title = pair[0].trim(); artist = pair[1].trim(); }
+                else if (value.contains("\t")) {
+                    String[] tab = value.split("\\t", 2); title = tab[0].trim(); artist = tab.length > 1 ? tab[1].trim() : artist;
+                } else title = value;
+            }
+            addImportedTrack(found, title, artist);
+            if (found.size() >= 1000) break;
+        }
+        return found;
+    }
+
+    private List<String> parseCsvLine(String line) {
+        List<String> cells = new ArrayList<>();
+        StringBuilder cell = new StringBuilder();
+        boolean quoted = false;
+        for (int i = 0; i < line.length(); i++) {
+            char ch = line.charAt(i);
+            if (ch == '"') {
+                if (quoted && i + 1 < line.length() && line.charAt(i + 1) == '"') { cell.append('"'); i++; }
+                else quoted = !quoted;
+            } else if (ch == ',' && !quoted) {
+                cells.add(cell.toString()); cell.setLength(0);
+            } else cell.append(ch);
+        }
+        cells.add(cell.toString());
+        return cells;
+    }
+
+    private void addImportedTrack(List<Track> target, String title, String artist) {
+        if (title == null || title.trim().isEmpty()) return;
+        String cleanTitle = title.trim();
+        String cleanArtist = artist == null || artist.trim().isEmpty() ? "Unknown artist" : artist.trim();
+        if (cleanTitle.toLowerCase(Locale.ROOT).matches(".*(spotify:track:|open\\.spotify\\.com/track/).*")) return;
+        target.add(new Track("imported-" + target.size(), cleanTitle, cleanArtist,
+                "Imported playlist • tap to find playable version", "playlist-entry", "", "", ""));
+    }
+
     private void submitSearch() {
         String query = searchField.getText().toString().trim();
         ((InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE))
@@ -270,7 +565,12 @@ public final class MainActivity extends Activity {
     }
 
     private void loadCurrentSource(String query) {
-        if ("youtube".equals(source)) loadYoutube(query);
+        if ("playlist".equals(source)) {
+            resultHeading.setText("YOUR IMPORTED PLAYLIST");
+            showTracks(playlistTracks, playlistTracks.isEmpty()
+                    ? "No imported tracks yet. Import a CSV, M3U, or pasted Spotify track list."
+                    : playlistTracks.size() + " imported tracks • tap a track to find it on YouTube/Morphe");
+        } else if ("youtube".equals(source)) loadYoutube(query);
         else if ("archive".equals(source)) loadArchive(query);
         else if ("radio".equals(source)) loadRadio(query);
         else loadAudius(query);
@@ -536,7 +836,7 @@ public final class MainActivity extends Activity {
                 LinearLayout card = new LinearLayout(this);
                 card.setOrientation(LinearLayout.VERTICAL);
                 card.setPadding(dp(14), dp(12), dp(14), dp(12));
-                card.setBackground(roundRect(PANEL, 15));
+                card.setBackground(panelCardDrawable());
                 TextView name = text(track.title, 15, TEXT, true);
                 name.setMaxLines(2);
                 TextView artist = text(track.artist, 13, MUTED, false);
@@ -550,6 +850,12 @@ public final class MainActivity extends Activity {
                 LinearLayout.LayoutParams providerLp = new LinearLayout.LayoutParams(-1, -2);
                 providerLp.topMargin = dp(7);
                 card.addView(provider, providerLp);
+                if ("archive".equals(track.provider)) {
+                    TextView download = text("↓  Download licensed audio", 12, ACCENT, true);
+                    download.setPadding(0, dp(11), 0, 0);
+                    download.setOnClickListener(v -> downloadArchive(track));
+                    card.addView(download);
+                }
                 card.setOnClickListener(v -> playTrack(track));
                 LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(-1, -2);
                 cardLp.bottomMargin = dp(8);
@@ -579,7 +885,142 @@ public final class MainActivity extends Activity {
         statusText.setText("Connection issue");
     }
 
+    private GradientDrawable panelCardDrawable() {
+        if ("Frutiger Aero".equals(activeTheme)) {
+            GradientDrawable d = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
+                    new int[]{Color.rgb(25, 94, 116), Color.rgb(20, 59, 83)});
+            d.setCornerRadius(dp(15));
+            d.setStroke(dp(1), Color.argb(105, 132, 255, 230));
+            return d;
+        }
+        if ("Cyberpunk".equals(activeTheme)) {
+            GradientDrawable d = roundRect(PANEL, 15);
+            d.setStroke(dp(1), ACCENT);
+            return d;
+        }
+        return roundRect(PANEL, 15);
+    }
+
+    private int audioFileRank(String name) {
+        String n = name.toLowerCase(Locale.ROOT);
+        boolean lossless = n.endsWith(".flac") || n.endsWith(".wav") || n.endsWith(".aiff") || n.endsWith(".alac");
+        if ("Prefer lossless".equals(activeQuality)) {
+            if (n.endsWith(".flac")) return 100;
+            if (n.endsWith(".wav") || n.endsWith(".aiff") || n.endsWith(".alac")) return 90;
+            if (n.endsWith(".opus")) return 55;
+            if (n.endsWith(".ogg")) return 50;
+            if (n.endsWith(".m4a") || n.endsWith(".aac")) return 45;
+            if (n.endsWith(".mp3")) return 40;
+        } else if ("Balanced (prefer high bitrate)".equals(activeQuality)) {
+            if (n.endsWith(".mp3")) return 100;
+            if (n.endsWith(".opus")) return 95;
+            if (n.endsWith(".flac")) return 90;
+            if (n.endsWith(".m4a") || n.endsWith(".aac")) return 85;
+            if (n.endsWith(".ogg")) return 80;
+        } else if ("Data saver".equals(activeQuality)) {
+            if (n.endsWith(".opus")) return 100;
+            if (n.endsWith(".ogg")) return 95;
+            if (n.endsWith(".mp3")) return 90;
+            if (n.endsWith(".aac") || n.endsWith(".m4a")) return 85;
+        } else {
+            if (n.endsWith(".flac")) return 100;
+            if (n.endsWith(".wav") || n.endsWith(".aiff") || n.endsWith(".alac")) return 95;
+            if (n.endsWith(".opus")) return 85;
+            if (n.endsWith(".ogg")) return 80;
+            if (n.endsWith(".m4a") || n.endsWith(".aac")) return 75;
+            if (n.endsWith(".mp3")) return 70;
+        }
+        return lossless ? 90 : -1;
+    }
+
+    private JSONObject chooseArchiveAudioFile(JSONArray files) {
+        JSONObject best = null;
+        int bestRank = -1;
+        long bestSize = -1;
+        for (int i = 0; i < files.length(); i++) {
+            JSONObject file = files.optJSONObject(i);
+            if (file == null || file.optBoolean("private", false)) continue;
+            String name = file.optString("name", "");
+            int rank = audioFileRank(name);
+            long size = file.optLong("size", 0L);
+            if (rank > bestRank || (rank == bestRank && size > bestSize)) {
+                best = file; bestRank = rank; bestSize = size;
+            }
+        }
+        return best;
+    }
+
+    private String describeAudioFile(JSONObject file) {
+        String name = file.optString("name", "").toLowerCase(Locale.ROOT);
+        if (name.endsWith(".flac") || name.endsWith(".wav") || name.endsWith(".aiff") || name.endsWith(".alac")) {
+            return "Lossless-format source • " + name.substring(name.lastIndexOf('.') + 1).toUpperCase(Locale.ROOT);
+        }
+        String bitrate = file.optString("bitrate", "");
+        if (!bitrate.isEmpty() && !bitrate.equals("0")) return "Source bitrate reported: " + bitrate + " kbps";
+        if (name.endsWith(".mp3")) return "MP3 source • bitrate varies by file";
+        if (name.endsWith(".opus")) return "Opus source • bitrate varies by file";
+        return "Original source file • bitrate not verified";
+    }
+
+    private boolean isAllowedArchiveLicense(String license) {
+        String lower = license == null ? "" : license.toLowerCase(Locale.ROOT);
+        return lower.contains("creativecommons.org/licenses/")
+                || lower.contains("creativecommons.org/publicdomain/")
+                || lower.contains("creativecommons.org/zero/");
+    }
+
+    private String chooseArchiveStreamUrl(String itemId, String fileName) {
+        return "https://archive.org/download/" + Uri.encode(itemId) + "/" + Uri.encode(fileName);
+    }
+
+    private void downloadArchive(Track track) {
+        statusText.setText("Verifying license before download…");
+        io.execute(() -> {
+            try {
+                JSONObject response = requestJsonObject("https://archive.org/metadata/" + enc(track.id));
+                JSONObject metadata = response.optJSONObject("metadata");
+                String license = metadata == null ? "" : metadata.optString("licenseurl", "");
+                if (license.isEmpty()) license = response.optString("licenseurl", "");
+                if (!isAllowedArchiveLicense(license))
+                    throw new Exception("This item has no verifiable Creative Commons/public-domain license. Download blocked.");
+                JSONArray files = response.optJSONArray("files");
+                if (files == null) throw new Exception("No downloadable files were listed.");
+                JSONObject chosen = chooseArchiveAudioFile(files);
+                if (chosen == null) throw new Exception("No supported audio file was found.");
+                String name = chosen.optString("name", "");
+                String url = chooseArchiveStreamUrl(track.id, name);
+                String quality = describeAudioFile(chosen);
+                main.post(() -> {
+                    try {
+                        DownloadManager manager = (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
+                        DownloadManager.Request request = new DownloadManager.Request(Uri.parse(url));
+                        request.setTitle(track.title);
+                        request.setDescription("Spotty • licensed audio • " + quality);
+                        request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+                        request.setAllowedOverMetered(true);
+                        request.setAllowedOverRoaming(false);
+                        String safeName = track.title.replaceAll("[^a-zA-Z0-9._ -]", "_").trim();
+                        if (safeName.isEmpty()) safeName = "Spotty_audio";
+                        int dot = name.lastIndexOf('.');
+                        String ext = dot >= 0 ? name.substring(dot) : ".audio";
+                        request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "Spotty/" + safeName + ext);
+                        manager.enqueue(request);
+                        statusText.setText("Download queued • " + quality);
+                    } catch (Exception e) {
+                        statusText.setText("Could not queue download: " + shortError(e));
+                    }
+                });
+            } catch (Exception e) {
+                main.post(() -> statusText.setText("Download blocked/failed • " + shortError(e)));
+            }
+        });
+    }
+
     private void playTrack(Track track) {
+        if ("playlist-entry".equals(track.provider)) {
+            openYoutubeSearch(track.title + " " + (track.artist.equals("Unknown artist") ? "" : track.artist));
+            return;
+        }
         if ("youtube".equals(track.provider)) {
             openYoutubeUrl(track.playUrl, track.title);
             return;
@@ -600,22 +1041,13 @@ public final class MainActivity extends Activity {
                     if (!allowed) throw new Exception("No verifiable Creative Commons/public-domain license was found. This item will not be played.");
                     JSONArray files = response.optJSONArray("files");
                     if (files == null) throw new Exception("This archive item has no accessible files.");
-                    String selected = "";
-                    for (int i = 0; i < files.length(); i++) {
-                        JSONObject file = files.optJSONObject(i);
-                        if (file == null || file.optBoolean("private", false)) continue;
-                        String name = file.optString("name", "");
-                        String low = name.toLowerCase(Locale.ROOT);
-                        if (low.endsWith(".mp3") || low.endsWith(".ogg") || low.endsWith(".m4a")
-                                || low.endsWith(".aac") || low.endsWith(".flac") || low.endsWith(".opus")) {
-                            selected = name;
-                            if (low.endsWith(".mp3")) break;
-                        }
-                    }
-                    if (selected.isEmpty()) throw new Exception("No supported public audio file was found for this item.");
-                    String stream = "https://archive.org/download/" + Uri.encode(track.id) + "/" + Uri.encode(selected);
+                    JSONObject chosen = chooseArchiveAudioFile(files);
+                    if (chosen == null) throw new Exception("No supported public audio file was found for this item.");
+                    String selected = chosen.optString("name", "");
+                    String stream = chooseArchiveStreamUrl(track.id, selected);
+                    String quality = describeAudioFile(chosen);
                     Track playable = new Track(track.id, track.title, track.artist,
-                            "Internet Archive • CC / public domain", "archive-playable", stream, "", license);
+                            "Internet Archive • " + quality, "archive-playable", stream, "", license);
                     main.post(() -> beginPlayback(playable));
                 } catch (Exception e) {
                     main.post(() -> {
