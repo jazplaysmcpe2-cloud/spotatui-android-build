@@ -36,8 +36,13 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.CompletionService;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorCompletionService;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 public final class MainActivity extends Activity {
     private static final int BG = Color.rgb(12, 15, 14);
@@ -48,7 +53,7 @@ public final class MainActivity extends Activity {
     private static final int ACCENT = Color.rgb(133, 235, 158);
 
     private final Handler main = new Handler(Looper.getMainLooper());
-    private final ExecutorService io = Executors.newFixedThreadPool(3);
+    private final ExecutorService io = Executors.newFixedThreadPool(6);
     private String source = "youtube";
     private LinearLayout sourceRow;
     private EditText searchField;
@@ -279,45 +284,78 @@ public final class MainActivity extends Activity {
     private void loadYoutube(String query) {
         resultHeading.setText(query.isEmpty() ? "POPULAR MUSIC ON YOUTUBE" : "YOUTUBE SEARCH");
         setLoading(query.isEmpty() ? "Finding popular music…" : "Searching YouTube videos and audio…");
+        String q = query.isEmpty() ? "music sort:views" : query;
+        String[] instances = new String[] {
+                "https://inv.nadeko.net",
+                "https://invidious.nerdvpn.de",
+                "https://yt.chocolatemoo53.com",
+                "https://invidious.tiekoetter.com"
+        };
+
+        // Race the documented public search instances. One unhealthy server must
+        // not block all the others or leave the search spinner running indefinitely.
         io.execute(() -> {
-            Exception lastError = null;
-            String q = query.isEmpty() ? "music sort:views" : query;
-            String[] instances = new String[] {
-                    "https://inv.nadeko.net",
-                    "https://invidious.nerdvpn.de",
-                    "https://yt.chocolatemoo53.com",
-                    "https://invidious.tiekoetter.com"
-            };
+            CompletionService<List<Track>> completedSearches = new ExecutorCompletionService<>(io);
+            List<Future<List<Track>>> requests = new ArrayList<>();
             for (String base : instances) {
-                try {
-                    JSONArray data = requestJsonArray(base + "/api/v1/search?q=" + enc(q) + "&type=video");
-                    List<Track> found = new ArrayList<>();
-                    for (int i = 0; i < data.length(); i++) {
-                        JSONObject item = data.optJSONObject(i);
-                        if (item == null) continue;
-                        String id = item.optString("videoId", "");
-                        String type = item.optString("type", "video");
-                        if (id.isEmpty() || (!"video".equals(type) && !"shortVideo".equals(type))) continue;
-                        String title = item.optString("title", "Untitled video");
-                        String artist = item.optString("author", "YouTube creator");
-                        String length = item.optString("lengthSeconds", "");
-                        String subtitle = "YouTube • opens in Morphe" + (length.isEmpty() ? "" : " • " + formatDuration(item.optInt("lengthSeconds", 0)));
-                        String watchUrl = "https://www.youtube.com/watch?v=" + Uri.encode(id);
-                        found.add(new Track(id, title, artist, subtitle, "youtube", watchUrl, "", ""));
-                        if (found.size() >= 30) break;
-                    }
-                    if (!found.isEmpty()) {
-                        main.post(() -> showTracks(found, found.size() + " results • playback via Morphe YouTube"));
-                        return;
-                    }
-                    lastError = new Exception("No matching videos were returned.");
-                } catch (Exception e) {
-                    lastError = e;
-                }
+                requests.add(completedSearches.submit(() -> searchYoutubeInstance(base, q)));
             }
-            Exception failure = lastError == null ? new Exception("No search provider responded.") : lastError;
-            main.post(() -> showYoutubeFallback(query, failure));
+
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(18);
+            Exception lastError = null;
+            int finished = 0;
+            try {
+                while (finished < requests.size()) {
+                    long remaining = deadline - System.nanoTime();
+                    if (remaining <= 0) break;
+                    Future<List<Track>> completed = completedSearches.poll(remaining, TimeUnit.NANOSECONDS);
+                    if (completed == null) break;
+                    finished++;
+                    try {
+                        List<Track> found = completed.get();
+                        if (!found.isEmpty()) {
+                            for (Future<List<Track>> pending : requests) {
+                                if (!pending.isDone()) pending.cancel(true);
+                            }
+                            main.post(() -> showTracks(found, found.size() + " results • playback via Morphe YouTube"));
+                            return;
+                        }
+                        lastError = new Exception("No matching videos were returned.");
+                    } catch (ExecutionException e) {
+                        Throwable cause = e.getCause();
+                        lastError = cause instanceof Exception ? (Exception) cause : new Exception("Search provider failed.");
+                    }
+                }
+                Exception failure = lastError == null
+                        ? new Exception("Public search providers timed out or are unavailable.")
+                        : lastError;
+                main.post(() -> showYoutubeFallback(query, failure));
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                main.post(() -> showYoutubeFallback(query, e));
+            }
         });
+    }
+
+    private List<Track> searchYoutubeInstance(String base, String query) throws Exception {
+        JSONArray data = requestJsonArray(base + "/api/v1/search?q=" + enc(query) + "&type=video");
+        List<Track> found = new ArrayList<>();
+        for (int i = 0; i < data.length(); i++) {
+            JSONObject item = data.optJSONObject(i);
+            if (item == null) continue;
+            String id = item.optString("videoId", "");
+            String type = item.optString("type", "video");
+            if (id.isEmpty() || (!"video".equals(type) && !"shortVideo".equals(type))) continue;
+            String title = item.optString("title", "Untitled video");
+            String artist = item.optString("author", "YouTube creator");
+            String subtitle = "YouTube • opens in Morphe";
+            int length = item.optInt("lengthSeconds", 0);
+            if (length > 0) subtitle += " • " + formatDuration(length);
+            String watchUrl = "https://www.youtube.com/watch?v=" + Uri.encode(id);
+            found.add(new Track(id, title, artist, subtitle, "youtube", watchUrl, "", ""));
+            if (found.size() >= 30) break;
+        }
+        return found;
     }
 
     private String formatDuration(int totalSeconds) {
@@ -348,6 +386,8 @@ public final class MainActivity extends Activity {
     }
 
     private void openYoutubeUrl(String url, String title) {
+        releasePlayer();
+        if (playPauseButton != null) playPauseButton.setText("▶");
         nowPlayingText.setText(title == null || title.isEmpty() ? "Opening YouTube…" : title);
         try {
             Intent morpheIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
@@ -681,8 +721,8 @@ public final class MainActivity extends Activity {
         try {
             conn = (HttpURLConnection) new URL(address).openConnection();
             conn.setRequestMethod("GET");
-            conn.setConnectTimeout(12000);
-            conn.setReadTimeout(18000);
+            conn.setConnectTimeout(7000);
+            conn.setReadTimeout(10000);
             conn.setRequestProperty("Accept", "application/json");
             conn.setRequestProperty("User-Agent", "SpottyAndroid/0.1 (Android music discovery app)");
             conn.setInstanceFollowRedirects(true);
