@@ -14,6 +14,7 @@ import android.view.View;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
 import android.content.Context;
+import android.content.Intent;
 import android.net.Uri;
 import android.widget.Button;
 import android.widget.EditText;
@@ -48,7 +49,8 @@ public final class MainActivity extends Activity {
 
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ExecutorService io = Executors.newFixedThreadPool(3);
-    private String source = "audius";
+    private String source = "youtube";
+    private LinearLayout sourceRow;
     private EditText searchField;
     private TextView statusText;
     private TextView resultHeading;
@@ -112,8 +114,9 @@ public final class MainActivity extends Activity {
 
         HorizontalScrollView sourceScroller = new HorizontalScrollView(this);
         sourceScroller.setHorizontalScrollBarEnabled(false);
-        LinearLayout sourceRow = new LinearLayout(this);
+        sourceRow = new LinearLayout(this);
         sourceRow.setOrientation(LinearLayout.HORIZONTAL);
+        sourceRow.addView(sourceButton("YouTube • Morphe", "youtube"));
         sourceRow.addView(sourceButton("Audius", "audius"));
         sourceRow.addView(sourceButton("Open Archive", "archive"));
         sourceRow.addView(sourceButton("Radio", "radio"));
@@ -162,9 +165,9 @@ public final class MainActivity extends Activity {
             chipLp.rightMargin = dp(7);
             chip.setOnClickListener(v -> {
                 searchField.setText(genre);
-                source = "audius";
+                source = "youtube";
                 refreshSourceButtons(sourceRow);
-                loadAudius(genre);
+                loadYoutube(genre);
             });
             genres.addView(chip, chipLp);
         }
@@ -262,9 +265,104 @@ public final class MainActivity extends Activity {
     }
 
     private void loadCurrentSource(String query) {
-        if ("archive".equals(source)) loadArchive(query);
+        if ("youtube".equals(source)) loadYoutube(query);
+        else if ("archive".equals(source)) loadArchive(query);
         else if ("radio".equals(source)) loadRadio(query);
         else loadAudius(query);
+    }
+
+    /**
+     * Search the public Invidious catalog, then delegate playback to the user's
+     * Morphe YouTube installation via an ordinary YouTube URL. Spotty does not
+     * extract or redistribute YouTube media streams.
+     */
+    private void loadYoutube(String query) {
+        resultHeading.setText(query.isEmpty() ? "POPULAR MUSIC ON YOUTUBE" : "YOUTUBE SEARCH");
+        setLoading(query.isEmpty() ? "Finding popular music…" : "Searching YouTube videos and audio…");
+        io.execute(() -> {
+            Exception lastError = null;
+            String q = query.isEmpty() ? "music sort:views" : query;
+            String[] instances = new String[] {
+                    "https://inv.nadeko.net",
+                    "https://invidious.nerdvpn.de",
+                    "https://yt.chocolatemoo53.com",
+                    "https://invidious.tiekoetter.com"
+            };
+            for (String base : instances) {
+                try {
+                    JSONArray data = requestJsonArray(base + "/api/v1/search?q=" + enc(q) + "&type=video");
+                    List<Track> found = new ArrayList<>();
+                    for (int i = 0; i < data.length(); i++) {
+                        JSONObject item = data.optJSONObject(i);
+                        if (item == null) continue;
+                        String id = item.optString("videoId", "");
+                        String type = item.optString("type", "video");
+                        if (id.isEmpty() || (!"video".equals(type) && !"shortVideo".equals(type))) continue;
+                        String title = item.optString("title", "Untitled video");
+                        String artist = item.optString("author", "YouTube creator");
+                        String length = item.optString("lengthSeconds", "");
+                        String subtitle = "YouTube • opens in Morphe" + (length.isEmpty() ? "" : " • " + formatDuration(item.optInt("lengthSeconds", 0)));
+                        String watchUrl = "https://www.youtube.com/watch?v=" + Uri.encode(id);
+                        found.add(new Track(id, title, artist, subtitle, "youtube", watchUrl, "", ""));
+                        if (found.size() >= 30) break;
+                    }
+                    if (!found.isEmpty()) {
+                        main.post(() -> showTracks(found, found.size() + " results • playback via Morphe YouTube"));
+                        return;
+                    }
+                    lastError = new Exception("No matching videos were returned.");
+                } catch (Exception e) {
+                    lastError = e;
+                }
+            }
+            Exception failure = lastError == null ? new Exception("No search provider responded.") : lastError;
+            main.post(() -> showYoutubeFallback(query, failure));
+        });
+    }
+
+    private String formatDuration(int totalSeconds) {
+        if (totalSeconds < 1) return "";
+        int hours = totalSeconds / 3600;
+        int minutes = (totalSeconds % 3600) / 60;
+        int seconds = totalSeconds % 60;
+        if (hours > 0) return String.format(Locale.ROOT, "%d:%02d:%02d", hours, minutes, seconds);
+        return String.format(Locale.ROOT, "%d:%02d", minutes, seconds);
+    }
+
+    private void showYoutubeFallback(String query, Exception e) {
+        showError("YouTube catalog search is temporarily unavailable: " + shortError(e));
+        TextView fallback = text("Open this search in Morphe YouTube  ↗", 14, ACCENT, true);
+        fallback.setPadding(dp(8), dp(12), dp(8), dp(16));
+        fallback.setOnClickListener(v -> openYoutubeSearch(query));
+        resultsList.addView(fallback);
+    }
+
+    private void openYoutubeSearch(String query) {
+        try {
+            String q = query == null || query.trim().isEmpty() ? "popular music" : query.trim();
+            String url = "https://www.youtube.com/results?search_query=" + enc(q);
+            openYoutubeUrl(url, "Search: " + q);
+        } catch (Exception e) {
+            statusText.setText("Could not open the YouTube search.");
+        }
+    }
+
+    private void openYoutubeUrl(String url, String title) {
+        nowPlayingText.setText(title == null || title.isEmpty() ? "Opening YouTube…" : title);
+        try {
+            Intent morpheIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+            morpheIntent.setPackage("app.morphe.android.youtube");
+            startActivity(morpheIntent);
+            statusText.setText("Opened Morphe YouTube • no Spotify Premium needed");
+        } catch (Exception morpheUnavailable) {
+            try {
+                Intent fallbackIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+                startActivity(fallbackIntent);
+                statusText.setText("Morphe not detected; opened the default YouTube app/browser");
+            } catch (Exception noHandler) {
+                statusText.setText("No app can open YouTube links. Install Morphe YouTube or a browser.");
+            }
+        }
     }
 
     private void loadAudius(String query) {
@@ -442,6 +540,10 @@ public final class MainActivity extends Activity {
     }
 
     private void playTrack(Track track) {
+        if ("youtube".equals(track.provider)) {
+            openYoutubeUrl(track.playUrl, track.title);
+            return;
+        }
         if ("archive".equals(track.provider)) {
             statusText.setText("Checking the audio license…");
             nowPlayingText.setText(track.title);
