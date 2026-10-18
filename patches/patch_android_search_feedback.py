@@ -73,8 +73,8 @@ replace_once(
     "Clear timeout on a new search",
 )
 replace_once(
-    "  }, [query, asked, ask]);\n  const submit = () => {",
-    """  }, [query, asked, ask]);
+    "  }, [query, asked, ask, spotifyAvailable]);\n  const submit = () => {",
+    """  }, [query, asked, ask, spotifyAvailable]);
   // The backend may drop a Spotify search when login is missing, or return an
   // error without publishing SearchPayload. Never leave the mobile UI spinning
   // forever; the timeout also exposes the backend's status/error for recovery.
