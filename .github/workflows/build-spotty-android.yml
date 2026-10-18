@@ -137,26 +137,7 @@ jobs:
           disable-linux-hw-accel: false
           disable-animations: true
           script: |
-            bash -euo pipefail <<'SPOTTY_SMOKE'
-            APK="$GITHUB_WORKSPACE/release-output/spotty-android-release.apk"
-            adb install "$APK"
-            adb logcat -c
-            adb shell am force-stop com.spotty.music
-            adb shell monkey -p com.spotty.music 1
-            sleep 5
-            PID="$(adb shell pidof com.spotty.music || true)"
-            adb logcat -d -s AndroidRuntime:E | tee "$GITHUB_WORKSPACE/release-output/emulator-errors.txt"
-            adb shell screencap -p /sdcard/spotty-smoke-test.png
-            adb pull /sdcard/spotty-smoke-test.png "$GITHUB_WORKSPACE/release-output/emulator-smoke-test.png"
-            if [[ -z "$PID" ]]; then
-              echo "Spotty did not remain running after launch."
-              exit 1
-            fi
-            if grep -F "Process: com.spotty.music" "$GITHUB_WORKSPACE/release-output/emulator-errors.txt"; then
-              echo "Spotty crashed in the emulator."
-              exit 1
-            fi
-            SPOTTY_SMOKE
+            bash "$GITHUB_WORKSPACE/spotty/scripts/emulator-smoke-test.sh"
 
       - name: Upload built and tested Spotty APK
         if: always() && hashFiles('release-output/spotty-android-release.apk') != ''
