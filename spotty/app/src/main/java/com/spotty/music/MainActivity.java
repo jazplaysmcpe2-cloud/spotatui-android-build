@@ -966,6 +966,8 @@ public final class MainActivity extends Activity {
             if (n.endsWith(".m4a") || n.endsWith(".aac")) return 75;
             if (n.endsWith(".mp3")) return 70;
         }
+        if ("Data saver".equals(activeQuality)) return lossless ? 10 : -1;
+        if ("Balanced (prefer high bitrate)".equals(activeQuality)) return lossless ? 60 : -1;
         return lossless ? 90 : -1;
     }
 
