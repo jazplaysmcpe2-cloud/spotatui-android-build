@@ -147,6 +147,8 @@ jobs:
 
       - name: Patch and instrument native Android loopback connection
         run: python3 workflow-files/patches/patch_android_loopback_diagnostics.py "$GITHUB_WORKSPACE/spotatui-source"
+      - name: Route Spotify pairing through the Android UI
+        run: python3 workflow-files/patches/patch_android_mobile_login.py "$GITHUB_WORKSPACE/spotatui-source"
       - name: Add Android Spotify search timeout and reconnect controls
         run: python3 workflow-files/patches/patch_android_search_feedback.py "$GITHUB_WORKSPACE/spotatui-source"
       - name: Make Android Spotify device authorization explicit
@@ -477,6 +479,11 @@ jobs:
           test -s "$APK"
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose "$APK"
           "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | tee "$GITHUB_WORKSPACE/apk-badging.txt"
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump permissions "$APK" | tee "$GITHUB_WORKSPACE/apk-permissions.txt"
+          grep -Fq "android.permission.INTERNET" "$GITHUB_WORKSPACE/apk-permissions.txt" || {
+            echo "ERROR: Release APK does not declare android.permission.INTERNET." >&2
+            exit 1
+          }
           grep -q "package: name='com.largemodgames.spotatui'" "$GITHUB_WORKSPACE/apk-badging.txt"
           grep -q "sdkVersion:'26'" "$GITHUB_WORKSPACE/apk-badging.txt"
           grep -q "versionCode='${{ github.run_number }}'" "$GITHUB_WORKSPACE/apk-badging.txt"
@@ -532,6 +539,7 @@ jobs:
             SHA256SUMS.txt
             spotatui-source-commit.txt
             apk-badging.txt
+            apk-permissions.txt
           if-no-files-found: error
           retention-days: 14
 

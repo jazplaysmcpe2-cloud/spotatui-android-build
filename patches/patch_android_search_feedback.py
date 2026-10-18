@@ -27,6 +27,12 @@ replace_once(
     "React Native imports",
 )
 replace_once(
+    "  const results = query && search?.query ? search : null;",
+    "  const results = query && search?.query === query ? search : null;",
+    "Prevent stale search results from masking a failed query",
+)
+
+replace_once(
     "const TYPE_PAUSE_MS = 350;",
     """const TYPE_PAUSE_MS = 350;
 /** Keep a failed or unauthenticated Spotify request from spinning indefinitely. */
