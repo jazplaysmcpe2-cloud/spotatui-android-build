@@ -55,7 +55,6 @@ function AndroidUpdatePanel() {
   const [release, setRelease] = useState<AndroidRelease | null>(null);
 
   const check = useCallback(async () => {
-    setChecking(true);
     try {
       const response = await fetch(ANDROID_RELEASES_API, {
         headers: { Accept: 'application/vnd.github+json' },
@@ -111,7 +110,10 @@ function AndroidUpdatePanel() {
       <Text style={[type.small, { marginTop: 4 }]}>{status}</Text>
       <Pressable
         style={{ marginTop: 8, minHeight: TOUCH, justifyContent: 'center' }}
-        onPress={() => void check()}
+        onPress={() => {
+          setChecking(true);
+          void check();
+        }}
         disabled={checking}
         accessibilityRole="button">
         <Text style={[type.bodyBold, { color: colors.accent }]}>
