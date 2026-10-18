@@ -25,14 +25,14 @@ jobs:
     permissions:
       contents: read
     outputs:
-      source_sha: ${expr} steps.check.outputs.source_sha }}
-      should_build: ${expr} steps.check.outputs.should_build }}
+      source_sha: ${{ steps.check.outputs.source_sha }}
+      should_build: ${{ steps.check.outputs.should_build }}
     steps:
       - name: Compare official source with the last smoke-tested revision
         id: check
         uses: actions/github-script@v8
         env:
-          ANDROID_KEYSTORE_BASE64: ${expr} secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         with:
           script: |
             const upstreamResponse = await github.request('GET /repos/{owner}/{repo}/commits/{ref}', {
@@ -98,7 +98,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: LargeModGames/spotatui
-          ref: ${expr} needs.check-upstream.outputs.source_sha }}
+          ref: ${{ needs.check-upstream.outputs.source_sha }}
           path: spotatui-source
 
       - name: Get build workflow scripts
@@ -177,7 +177,7 @@ jobs:
       - name: Configure Android version and architectures
         working-directory: spotatui-source/mobile/app
         env:
-          ANDROID_BUILD_NUMBER: ${expr} github.run_number }}
+          ANDROID_BUILD_NUMBER: ${{ github.run_number }}
         run: |
           set -euo pipefail
           python3 - <<'PY'
@@ -346,7 +346,7 @@ jobs:
               raise SystemExit("Could not identify the generated Android application manifest element.")
           tag = source[start:end]
           def set_attribute(tag, name, value):
-              pattern = r'\\s+' + re.escape(name) + r'="[^"]*"'
+              pattern = r'\s+' + re.escape(name) + r'="[^"]*"'
               if re.search(pattern, tag):
                   return re.sub(pattern, ' ' + name + '="' + value + '"', tag, count=1)
               return tag + ' ' + name + '="' + value + '"'
@@ -380,10 +380,10 @@ jobs:
       - name: Configure persistent Android release signing
         id: signing
         env:
-          ANDROID_KEYSTORE_BASE64: ${expr} secrets.ANDROID_KEYSTORE_BASE64 }}
-          ANDROID_KEYSTORE_PASSWORD: ${expr} secrets.ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_KEY_ALIAS: ${expr} secrets.ANDROID_KEY_ALIAS }}
-          ANDROID_KEY_PASSWORD: ${expr} secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           set -euo pipefail
           values=("$ANDROID_KEYSTORE_BASE64" "$ANDROID_KEYSTORE_PASSWORD" "$ANDROID_KEY_ALIAS" "$ANDROID_KEY_PASSWORD")
@@ -471,7 +471,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v7
         with:
-          name: spotatui-android-${expr} steps.signing.outputs.available == 'true' && 'release' || 'ci-test' }}-apk
+          name: spotatui-android-${{ steps.signing.outputs.available == 'true' && 'release' || 'ci-test' }}-apk
           path: |
             spotatui-android-release.apk
             SHA256SUMS.txt
@@ -483,7 +483,7 @@ jobs:
       - name: Publish signed Android update release
         if: success() && steps.signing.outputs.available == 'true'
         env:
-          GH_TOKEN: ${expr} github.token }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           cat > "$GITHUB_WORKSPACE/android-release-notes.md" <<EOF
@@ -508,7 +508,7 @@ jobs:
         if: success()
         uses: actions/github-script@v8
         env:
-          SOURCE_SHA: ${expr} needs.check-upstream.outputs.source_sha }}
+          SOURCE_SHA: ${{ needs.check-upstream.outputs.source_sha }}
         with:
           script: |
             const path = 'upstream-source-revision.txt';
