@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { EN } from '@gui/i18n';
@@ -43,6 +43,12 @@ export default function StatsScreen() {
     <View style={styles.screen}>
       <SafeAreaView edges={['top']} style={styles.top}>
         <Text style={type.title}>{EN.stats}</Text>
+        <Pressable
+          style={styles.recapButton}
+          onPress={() => send('GenerateStatsRecap')}
+          accessibilityRole="button">
+          <Text style={styles.recapText}>Generate recap</Text>
+        </Pressable>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips}>
           {periodOptions.map((entry) => (
             <Chip key={entry.key} label={entry.label} on={entry.key === period} onPress={() => pickPeriod(entry.key)} />
@@ -179,6 +185,8 @@ function SectionTitle({ title, trailing }: { title: string; trailing?: string })
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.background },
   top: { gap: 12, paddingHorizontal: 16, paddingTop: 12, paddingBottom: 8 },
+  recapButton: { alignSelf: 'flex-start', minHeight: 40, justifyContent: 'center', paddingHorizontal: 16, borderRadius: 20, borderWidth: 1, borderColor: colors.border },
+  recapText: { fontFamily: fonts.semibold, fontSize: 13, color: colors.text },
   chips: { gap: 8 },
   status: { paddingHorizontal: 16, paddingVertical: 20 },
   metricRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingTop: 8, paddingBottom: 12 },
