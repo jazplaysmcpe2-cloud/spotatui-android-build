@@ -1,14 +1,18 @@
-
-name: Build Spotatui Android APK
+name: Build Spotatui Android Release APK
 
 on:
   workflow_dispatch:
   push:
     paths:
       - '.github/workflows/build-spotatui-android.yml'
+      - 'patches/**'
 
 permissions:
   contents: read
+
+concurrency:
+  group: spotatui-android-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build-android:
@@ -22,6 +26,11 @@ jobs:
           repository: LargeModGames/spotatui
           ref: main
           path: spotatui-source
+
+      - name: Record exact source revision
+        working-directory: spotatui-source
+        run: |
+          git rev-parse HEAD | tee "$GITHUB_WORKSPACE/spotatui-source-commit.txt"
 
       - name: Set up Java
         uses: actions/setup-java@v4
@@ -38,77 +47,222 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
-        with:
-          packages: platform-tools
 
-      - name: Install Android SDK and NDK
+      - name: Install Android SDK, emulator, and NDK
         run: |
+          set -euo pipefail
           yes | sdkmanager --licenses >/dev/null
           sdkmanager --install \
             "platform-tools" \
             "platforms;android-36" \
             "build-tools;36.0.0" \
+            "emulator" \
+            "system-images;android-36;google_apis;x86_64" \
             "ndk;27.1.12297006"
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.1.12297006" >> "$GITHUB_ENV"
 
-      - name: Set up Rust
+      - name: Set up Rust for phone and emulator architectures
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-linux-android
+          targets: aarch64-linux-android,x86_64-linux-android
 
       - name: Install cargo-ndk
         run: cargo install cargo-ndk --locked
 
-      - name: Build native Android core
+      - name: Build optimized native Android core
         working-directory: spotatui-source/mobile/core
         run: |
-          cargo ndk -t arm64-v8a -P 26 \
+          set -euo pipefail
+          cargo ndk -t arm64-v8a -t x86_64 -P 26 \
             -o ../app/modules/spotatui-core/android/src/main/jniLibs \
-            build
+            build --release
 
       - name: Install app dependencies
         working-directory: spotatui-source/mobile/app
         run: npm ci
 
-      - name: Configure for Android phones
+      - name: Configure Android architectures and cleartext loopback
         working-directory: spotatui-source/mobile/app
         run: |
+          set -euo pipefail
           python3 - <<'PY'
           import json
           from pathlib import Path
 
           path = Path("app.json")
           config = json.loads(path.read_text())
-          config["expo"].setdefault("android", {})["usesCleartextTraffic"] = True
+          expo = config.setdefault("expo", {})
+          android = expo.setdefault("android", {})
+          android["usesCleartextTraffic"] = True
 
-          for plugin in config["expo"].get("plugins", []):
+          found_build_properties = False
+          for plugin in expo.get("plugins", []):
               if (isinstance(plugin, list) and len(plugin) > 1
                       and plugin[0] == "expo-build-properties"
                       and isinstance(plugin[1], dict)):
-                  plugin[1].setdefault("android", {})["buildArchs"] = ["arm64-v8a"]
+                  plugin[1].setdefault("android", {})["buildArchs"] = ["arm64-v8a", "x86_64"]
+                  found_build_properties = True
+          if not found_build_properties:
+              raise SystemExit("Expected expo-build-properties plugin was not found; refusing an unverified config.")
 
           path.write_text(json.dumps(config, indent=2) + "\n")
           PY
+
+      - name: Prevent an indefinite font-loading splash
+        working-directory: spotatui-source/mobile/app
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("src/app/_layout.tsx")
+          source = path.read_text()
+          old = """export default function RootLayout() {
+            const [fontsLoaded] = useFonts(fontFiles);
+          """
+          new = """export default function RootLayout() {
+            const [fontsLoaded, fontError] = useFonts(fontFiles);
+            const [fontLoadTimedOut, setFontLoadTimedOut] = useState(false);
+          """
+          if source.count(old) != 1:
+              raise SystemExit("RootLayout font declaration changed upstream; refusing a blind patch.")
+          source = source.replace(old, new, 1)
+
+          old = """  useEffect(() => {
+              if (fontsLoaded) SplashScreen.hideAsync();
+            }, [fontsLoaded]);
+            if (!fontsLoaded) return null;
+          """
+          new = """  useEffect(() => {
+              const timeout = setTimeout(() => setFontLoadTimedOut(true), 8000);
+              return () => clearTimeout(timeout);
+            }, []);
+            const canRender = fontsLoaded || Boolean(fontError) || fontLoadTimedOut;
+            useEffect(() => {
+              if (canRender) {
+                void SplashScreen.hideAsync().catch(() => undefined);
+              }
+            }, [canRender]);
+            useEffect(() => {
+              if (fontError) console.warn('[Spotatui] Font loading failed; using system fallback.', fontError);
+              if (fontLoadTimedOut && !fontsLoaded && !fontError) {
+                console.warn('[Spotatui] Font loading timed out; using system fallback.');
+              }
+            }, [fontError, fontLoadTimedOut, fontsLoaded]);
+            if (!canRender) return null;
+          """
+          if source.count(old) != 1:
+              raise SystemExit("RootLayout splash logic changed upstream; refusing a blind patch.")
+          source = source.replace(old, new, 1)
+          path.write_text(source)
+          PY
+
+      - name: Lint and type-check mobile app
+        working-directory: spotatui-source/mobile/app
+        run: |
+          set -euo pipefail
+          npx expo lint
+          npx tsc --noEmit
 
       - name: Generate Android project
         working-directory: spotatui-source/mobile/app
         run: npx expo prebuild --platform android --no-install
 
-      - name: Build APK
+      - name: Build standalone release APK
         working-directory: spotatui-source/mobile/app/android
-        run: ./gradlew --no-daemon :app:assembleDebug
+        run: ./gradlew --no-daemon --stacktrace clean :app:assembleRelease
 
-      - name: Verify APK
+      - name: Verify APK signature, embedded JavaScript, SDK, and native ABIs
+        working-directory: spotatui-source/mobile/app/android
         run: |
-          APK="spotatui-source/mobile/app/android/app/build/outputs/apk/debug/app-debug.apk"
+          set -euo pipefail
+          APK="app/build/outputs/apk/release/app-release.apk"
           test -s "$APK"
-          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify "$APK"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose "$APK"
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | tee "$GITHUB_WORKSPACE/apk-badging.txt"
+          grep -q "package: name='com.largemodgames.spotatui'" "$GITHUB_WORKSPACE/apk-badging.txt"
+          grep -q "sdkVersion:'26'" "$GITHUB_WORKSPACE/apk-badging.txt"
+          unzip -Z1 "$APK" | grep -Fxq 'assets/index.android.bundle'
+          unzip -Z1 "$APK" | grep -Fxq 'lib/arm64-v8a/libspotatui_mobile.so'
+          unzip -Z1 "$APK" | grep -Fxq 'lib/x86_64/libspotatui_mobile.so'
+          unzip -p "$APK" assets/index.android.bundle > "$GITHUB_WORKSPACE/index.android.bundle"
+          test "$(wc -c < "$GITHUB_WORKSPACE/index.android.bundle")" -gt 100000
+          sha256sum "$APK" | tee "$GITHUB_WORKSPACE/SHA256SUMS.txt"
+          cp "$APK" "$GITHUB_WORKSPACE/spotatui-android-release.apk"
 
-      - name: Save APK for download
+      - name: Smoke-test standalone APK in Android emulator (two cold starts)
+        uses: ReactiveCircus/android-emulator-runner@v2
+        with:
+          api-level: 36
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          script: |
+            set -euo pipefail
+            APK="$GITHUB_WORKSPACE/spotatui-android-release.apk"
+            adb install -r "$APK"
+
+            for round in 1 2; do
+              echo "Cold-start test $round/2"
+              adb shell am force-stop com.largemodgames.spotatui
+              adb shell pm clear com.largemodgames.spotatui >/dev/null
+              adb logcat -c
+              adb shell monkey -p com.largemodgames.spotatui 1
+
+              ready=0
+              for attempt in $(seq 1 40); do
+                sleep 3
+                adb shell uiautomator dump /sdcard/spotatui-window.xml >/dev/null 2>&1 || true
+                adb shell cat /sdcard/spotatui-window.xml > "$GITHUB_WORKSPACE/spotatui-ui-round-${round}.xml" 2>/dev/null || true
+                if grep -qiE 'text="(Starting spotatui|Connecting|SPOTIFY|Spotify|Try again|Settings|Home|Search|Your Library|The connection to spotatui|Welcome|Choose|Pick|enable|source|Premium|account|Select)' "$GITHUB_WORKSPACE/spotatui-ui-round-${round}.xml"; then
+                  ready=1
+                  break
+                fi
+                if ! adb shell pidof com.largemodgames.spotatui >/dev/null 2>&1; then
+                  echo "App process exited before a usable screen appeared."
+                fi
+              done
+
+              adb logcat -d -v threadtime > "$GITHUB_WORKSPACE/spotatui-logcat-round-${round}.txt"
+              if [ "$ready" -ne 1 ]; then
+                echo "App did not get past the native splash screen in cold-start round $round."
+                tail -n 300 "$GITHUB_WORKSPACE/spotatui-logcat-round-${round}.txt"
+                exit 1
+              fi
+              if grep -E 'FATAL EXCEPTION|UnsatisfiedLinkError|dlopen failed' "$GITHUB_WORKSPACE/spotatui-logcat-round-${round}.txt"; then
+                echo "Fatal Android/native-library error found in round $round."
+                exit 1
+              fi
+              if ! adb shell pidof com.largemodgames.spotatui >/dev/null 2>&1; then
+                echo "App process was not alive after reaching a screen in round $round."
+                exit 1
+              fi
+              echo "Cold-start test $round passed."
+            done
+
+      - name: Upload release APK and checksum
+        if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: spotatui-android-apk
-          path: spotatui-source/mobile/app/android/app/build/outputs/apk/debug/app-debug.apk
+          name: spotatui-android-release-apk
+          path: |
+            spotatui-android-release.apk
+            SHA256SUMS.txt
+            spotatui-source-commit.txt
+            apk-badging.txt
           if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload diagnostic logs if smoke test fails
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: spotatui-android-smoke-test-diagnostics
+          path: |
+            spotatui-logcat-round-*.txt
+            spotatui-ui-round-*.xml
+            apk-badging.txt
+            SHA256SUMS.txt
+          if-no-files-found: ignore
           retention-days: 7
-          
