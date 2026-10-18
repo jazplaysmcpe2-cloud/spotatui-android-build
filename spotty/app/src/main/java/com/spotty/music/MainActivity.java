@@ -23,6 +23,7 @@ import android.net.Uri;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.HorizontalScrollView;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -77,6 +78,11 @@ public final class MainActivity extends Activity {
     private final List<Track> visibleTracks = new ArrayList<>();
     private int youtubeSearchVersion = 0;
     private final List<Track> playlistTracks = new ArrayList<>();
+    private final List<Track> favoriteTracks = new ArrayList<>();
+    private List<Track> playbackQueue = new ArrayList<>();
+    private int playbackQueueIndex = -1;
+    private TextView previousTrackButton;
+    private TextView nextTrackButton;
     private String importedPlaylistName = "Imported playlist";
     private String activeTheme = "Frutiger Aero";
     private String activeQuality = "Best available";
@@ -89,6 +95,7 @@ public final class MainActivity extends Activity {
         String savedPlaylist = savedPrefs.getString("imported_playlist_text", "");
         importedPlaylistName = savedPrefs.getString("imported_playlist_name", "Imported playlist");
         if (!savedPlaylist.trim().isEmpty()) playlistTracks.addAll(parsePlaylistTracks(savedPlaylist));
+        favoriteTracks.addAll(readFavoriteTracks(savedPrefs.getString("favorite_tracks_json", "[]")));
         getWindow().setStatusBarColor(BG);
         getWindow().setNavigationBarColor(BG);
         getWindow().getDecorView().setSystemUiVisibility(0);
@@ -107,12 +114,10 @@ public final class MainActivity extends Activity {
         header.setGravity(Gravity.CENTER_VERTICAL);
         header.setOrientation(LinearLayout.HORIZONTAL);
 
-        TextView mark = new TextView(this);
-        mark.setText("♫");
-        mark.setTextColor(ACCENT);
-        mark.setTextSize(32);
-        mark.setTypeface(Typeface.DEFAULT_BOLD);
-        header.addView(mark, new LinearLayout.LayoutParams(dp(42), dp(48)));
+        ImageView mark = new ImageView(this);
+        mark.setImageResource(R.drawable.spotty_app_icon);
+        mark.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        header.addView(mark, new LinearLayout.LayoutParams(dp(46), dp(46)));
 
         LinearLayout titleBlock = new LinearLayout(this);
         titleBlock.setOrientation(LinearLayout.VERTICAL);
@@ -145,6 +150,7 @@ public final class MainActivity extends Activity {
         sourceRow.addView(sourceButton("Open Archive", "archive"));
         sourceRow.addView(sourceButton("Radio", "radio"));
         sourceRow.addView(sourceButton("Playlists", "playlist"));
+        sourceRow.addView(sourceButton("Liked", "liked"));
         sourceScroller.addView(sourceRow);
         screen.addView(sourceScroller, new LinearLayout.LayoutParams(-1, dp(44)));
 
@@ -261,11 +267,27 @@ public final class MainActivity extends Activity {
         miniText.addView(nowPlayingText, nowLp);
         mini.addView(miniText, new LinearLayout.LayoutParams(0, -2, 1));
 
+        previousTrackButton = text("⏮", 16, TEXT, true);
+        previousTrackButton.setGravity(Gravity.CENTER);
+        previousTrackButton.setBackground(roundRect(PANEL_ALT, 50));
+        previousTrackButton.setOnClickListener(v -> playPreviousTrack());
+        LinearLayout.LayoutParams previousLp = new LinearLayout.LayoutParams(dp(38), dp(38));
+        previousLp.rightMargin = dp(5);
+        mini.addView(previousTrackButton, previousLp);
+
         playPauseButton = text("▶", 22, ACCENT, true);
         playPauseButton.setGravity(Gravity.CENTER);
         playPauseButton.setBackground(roundRect(PANEL_ALT, 50));
         playPauseButton.setOnClickListener(v -> togglePlayback());
-        mini.addView(playPauseButton, new LinearLayout.LayoutParams(dp(44), dp(44)));
+        mini.addView(playPauseButton, new LinearLayout.LayoutParams(dp(42), dp(42)));
+
+        nextTrackButton = text("⏭", 16, TEXT, true);
+        nextTrackButton.setGravity(Gravity.CENTER);
+        nextTrackButton.setBackground(roundRect(PANEL_ALT, 50));
+        nextTrackButton.setOnClickListener(v -> playNextTrack());
+        LinearLayout.LayoutParams nextLp = new LinearLayout.LayoutParams(dp(38), dp(38));
+        nextLp.leftMargin = dp(5);
+        mini.addView(nextTrackButton, nextLp);
 
         LinearLayout.LayoutParams miniLp = new LinearLayout.LayoutParams(-1, -2);
         miniLp.topMargin = dp(8);
@@ -760,7 +782,12 @@ public final class MainActivity extends Activity {
     }
 
     private void loadCurrentSource(String query) {
-        if ("playlist".equals(source)) {
+        if ("liked".equals(source)) {
+            resultHeading.setText("YOUR LIKED MUSIC");
+            showTracks(new ArrayList<>(favoriteTracks), favoriteTracks.isEmpty()
+                    ? "Your collection is empty. Tap the heart on a result to save it here."
+                    : favoriteTracks.size() + " saved tracks • stored on this device");
+        } else if ("playlist".equals(source)) {
             resultHeading.setText("PLAYLIST • " + importedPlaylistName.toUpperCase(Locale.ROOT));
             showTracks(playlistTracks, playlistTracks.isEmpty()
                     ? "No imported tracks yet. Import a CSV, M3U, or pasted Spotify track list."
@@ -1091,7 +1118,27 @@ public final class MainActivity extends Activity {
                 artist.setMaxLines(1);
                 TextView provider = text(track.subtitle, 10, ACCENT, false);
                 provider.setMaxLines(1);
-                card.addView(name);
+                LinearLayout titleRow = new LinearLayout(this);
+                titleRow.setOrientation(LinearLayout.HORIZONTAL);
+                titleRow.setGravity(Gravity.CENTER_VERTICAL);
+                name.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 1));
+                titleRow.addView(name);
+                TextView like = text(isFavorite(track) ? "♥" : "♡", 23,
+                        isFavorite(track) ? ACCENT : MUTED, true);
+                like.setGravity(Gravity.CENTER);
+                like.setContentDescription(isFavorite(track) ? "Remove from liked tracks" : "Add to liked tracks");
+                like.setPadding(dp(8), 0, dp(4), 0);
+                like.setOnClickListener(v -> {
+                    boolean nowLiked = toggleFavorite(track);
+                    like.setText(nowLiked ? "♥" : "♡");
+                    like.setTextColor(nowLiked ? ACCENT : MUTED);
+                    like.setContentDescription(nowLiked ? "Remove from liked tracks" : "Add to liked tracks");
+                    if ("liked".equals(source) && !nowLiked) {
+                        showTracks(new ArrayList<>(favoriteTracks), favoriteTracks.size() + " saved tracks • stored on this device");
+                    }
+                });
+                titleRow.addView(like, new LinearLayout.LayoutParams(dp(42), dp(42)));
+                card.addView(titleRow);
                 LinearLayout.LayoutParams artistLp = new LinearLayout.LayoutParams(-1, -2);
                 artistLp.topMargin = dp(4);
                 card.addView(artist, artistLp);
@@ -1274,6 +1321,11 @@ public final class MainActivity extends Activity {
     }
 
     private void playTrack(Track track) {
+        int visibleIndex = visibleTracks.indexOf(track);
+        if (visibleIndex >= 0) {
+            playbackQueue = new ArrayList<>(visibleTracks);
+            playbackQueueIndex = visibleIndex;
+        }
         if ("playlist-entry".equals(track.provider)) {
             openYoutubeSearch(track.title + " " + (track.artist.equals("Unknown artist") ? "" : track.artist));
             return;
@@ -1346,6 +1398,7 @@ public final class MainActivity extends Activity {
                     paused = false;
                     playPauseButton.setText("▶");
                     statusText.setText("Track finished");
+                    if (playbackQueue.size() > 1) main.postDelayed(() -> playNextTrack(), 350L);
                 }
             });
             next.setOnErrorListener((mp, what, extra) -> {
@@ -1365,6 +1418,108 @@ public final class MainActivity extends Activity {
             preparing = false;
             releasePlayer();
         }
+    }
+
+    private boolean sameTrack(Track a, Track b) {
+        if (a == null || b == null) return false;
+        if (!a.provider.equals(b.provider)) return false;
+        if (!a.playUrl.isEmpty() || !b.playUrl.isEmpty()) return a.playUrl.equals(b.playUrl);
+        return a.id.equals(b.id) && a.title.equals(b.title) && a.artist.equals(b.artist);
+    }
+
+    private boolean isFavorite(Track track) {
+        for (Track saved : favoriteTracks) if (sameTrack(saved, track)) return true;
+        return false;
+    }
+
+    private boolean toggleFavorite(Track track) {
+        for (int i = 0; i < favoriteTracks.size(); i++) {
+            if (sameTrack(favoriteTracks.get(i), track)) {
+                favoriteTracks.remove(i);
+                persistFavoriteTracks();
+                statusText.setText("Removed from liked tracks");
+                return false;
+            }
+        }
+        favoriteTracks.add(track);
+        persistFavoriteTracks();
+        statusText.setText("Added to liked tracks");
+        return true;
+    }
+
+    private void persistFavoriteTracks() {
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                .putString("favorite_tracks_json", serializeTrackList(favoriteTracks))
+                .apply();
+    }
+
+    private String serializeTrackList(List<Track> tracks) {
+        JSONArray array = new JSONArray();
+        for (Track track : tracks) {
+            JSONObject item = new JSONObject();
+            try {
+                item.put("id", track.id);
+                item.put("title", track.title);
+                item.put("artist", track.artist);
+                item.put("subtitle", track.subtitle);
+                item.put("provider", track.provider);
+                item.put("playUrl", track.playUrl);
+                item.put("artworkUrl", track.artworkUrl);
+                item.put("license", track.license);
+                array.put(item);
+            } catch (Exception ignored) {}
+        }
+        return array.toString();
+    }
+
+    private List<Track> readFavoriteTracks(String raw) {
+        List<Track> tracks = new ArrayList<>();
+        try {
+            JSONArray array = new JSONArray(raw);
+            for (int i = 0; i < array.length() && tracks.size() < 2000; i++) {
+                JSONObject item = array.optJSONObject(i);
+                if (item == null) continue;
+                String provider = item.optString("provider", "");
+                String playUrl = item.optString("playUrl", "");
+                // Keep only HTTP(S) links in persisted favourites; don't restore arbitrary URI schemes.
+                if (!playUrl.isEmpty() && !(playUrl.startsWith("https://") || playUrl.startsWith("http://"))) continue;
+                tracks.add(new Track(item.optString("id", ""), item.optString("title", ""),
+                        item.optString("artist", ""), item.optString("subtitle", ""),
+                        provider, playUrl, item.optString("artworkUrl", ""), item.optString("license", "")));
+            }
+        } catch (Exception ignored) {}
+        return tracks;
+    }
+
+    private void playNextTrack() {
+        if (playbackQueue.isEmpty()) {
+            statusText.setText("Play a result first to start a queue.");
+            return;
+        }
+        playbackQueueIndex = (playbackQueueIndex + 1) % playbackQueue.size();
+        Track track = playbackQueue.get(playbackQueueIndex);
+        statusText.setText("Next • " + track.title);
+        playTrack(track);
+    }
+
+    private void playPreviousTrack() {
+        if (playbackQueue.isEmpty()) {
+            statusText.setText("Play a result first to start a queue.");
+            return;
+        }
+        if (player != null && !preparing) {
+            try {
+                if (player.getCurrentPosition() > 3000) {
+                    player.seekTo(0);
+                    statusText.setText("Restarted track");
+                    return;
+                }
+            } catch (Exception ignored) {}
+        }
+        playbackQueueIndex = (playbackQueueIndex - 1 + playbackQueue.size()) % playbackQueue.size();
+        Track track = playbackQueue.get(playbackQueueIndex);
+        statusText.setText("Previous • " + track.title);
+        playTrack(track);
     }
 
     private void togglePlayback() {
