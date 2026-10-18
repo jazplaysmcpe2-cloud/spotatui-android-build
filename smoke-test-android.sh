@@ -127,6 +127,15 @@ for round in 1 2; do
     exit 1
   fi
 
+  # pm clear above guarantees a fresh, logged-out app state for each round.
+  # The phone must expose a direct Android-friendly action for Spotify's device pairing flow.
+  if ! grep -Fq 'Open Spotify sign-in in browser' "$UI_XML"; then
+    echo "ERROR: Fresh install did not expose the Spotify sign-in action in cold-start round ${round}." >&2
+    cat "$UI_XML" >&2 || true
+    grep -Ei 'spotatui|ReactNativeJS|GUI:|WebSocket|FATAL EXCEPTION|error|warn' "$LOGCAT" | tail -n 300 >&2 || true
+    exit 1
+  fi
+
   if grep -A 30 -B 3 -E 'FATAL EXCEPTION|UnsatisfiedLinkError|dlopen failed' "$LOGCAT" | grep -F "$PACKAGE" >/dev/null; then
     echo "ERROR: Fatal Java/native startup error found in Spotatui round ${round}." >&2
     tail -n 300 "$LOGCAT" >&2
