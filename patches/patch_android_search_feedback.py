@@ -176,7 +176,7 @@ checks = [
     "Spotify did not return results for this search.",
     "SelectSource: 'Spotify'",
     "Retry search",
-    "Wait for Spotify session before searching",
+    "!spotifyAvailable || !query || query === asked",
     "Connect a Spotify Premium account",
 ]
 for marker in checks:

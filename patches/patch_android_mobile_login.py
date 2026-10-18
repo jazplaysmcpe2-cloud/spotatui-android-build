@@ -159,7 +159,7 @@ for relative, marker in [
     ("src/infra/network/mod.rs", "Android sign-in URL is exposed in the mobile UI"),
     ("mobile/app/src/app/_layout.tsx", "<SpotifyLoginPrompt />"),
     ("mobile/app/src/components/SpotifyLoginPrompt.tsx", "Linking.openURL(url)"),
-    ("mobile/app/src/app/(tabs)/index.tsx", "Wait for Spotify authentication"),
+    ("mobile/app/src/app/(tabs)/index.tsx", "The local UI socket connects before Spotify authentication"),
 ]:
     if marker not in (root / relative).read_text(encoding="utf-8"):
         raise SystemExit(f"Post-patch check failed: {marker} not found in {relative}")
