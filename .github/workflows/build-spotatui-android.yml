@@ -46,7 +46,7 @@ jobs:
           cache-dependency-path: spotatui-source/mobile/app/package-lock.json
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
         with:
           # Explicitly avoid the action defaulting to the obsolete SDK package "tools".
           packages: platform-tools
@@ -54,7 +54,8 @@ jobs:
       - name: Install Android SDK, emulator, and NDK
         run: |
           set -euo pipefail
-          yes | sdkmanager --licenses >/dev/null
+          # setup-android@v4 already accepts the SDK licenses; do not pipe yes into sdkmanager
+          # under pipefail, which can treat yes receiving SIGPIPE as a failed build.
           sdkmanager --install \
             "platform-tools" \
             "platforms;android-36" \
