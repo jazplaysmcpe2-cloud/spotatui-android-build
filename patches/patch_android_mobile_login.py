@@ -32,6 +32,25 @@ replace_once(
 )
 
 replace_once(
+    "mobile/app/src/app/(tabs)/index.tsx",
+    '''  useEffect(() => {
+    if (!connected) askedDiscover.current = false;
+    if (askedDiscover.current || !asksDiscover(discover, connected)) return;
+    askedDiscover.current = true;
+    send({ OpenLibrary: 'Discover' });
+  }, [connected, discover, send]);''',
+    '''  useEffect(() => {
+    // The local UI socket connects before Spotify authentication. A Discover
+    // request at that point is rejected and must not block the post-login fetch.
+    if (!connected || !spotify) askedDiscover.current = false;
+    if (!spotify || askedDiscover.current || !asksDiscover(discover, connected)) return;
+    askedDiscover.current = true;
+    send({ OpenLibrary: 'Discover' });
+  }, [connected, discover, send, spotify]);''',
+    "Wait for Spotify authentication before loading the Home feed",
+)
+
+replace_once(
     "src/infra/network/mod.rs",
     '''      if let Err(e) = open::that_detached(pending.url()) {
         log::warn!("[login] failed to open browser automatically: {e}");
@@ -54,7 +73,7 @@ import { colors, fonts } from '@/theme';
 export function SpotifyLoginPrompt() {
   const status = useChannel('status');
   const message = status?.message ?? '';
-  const url = message.match(/https?:\/\/(?:www\.)?spotify\.com\/(?:pair|activate|login|authorize)\S*/i)?.[0]?.replace(/[),.;]+$/, '') ?? null;
+  const url = message.match(/https?:\/\/(?:[A-Za-z0-9-]+\.)*spotify\.com\/(?:pair|activate|login|authorize)\S*/i)?.[0]?.replace(/[),.;]+$/, '') ?? null;
   const code = message.match(/confirm the code\s+([A-Z0-9-]+)/i)?.[1] ?? null;
   const [dismissed, setDismissed] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -140,6 +159,7 @@ for relative, marker in [
     ("src/infra/network/mod.rs", "Android sign-in URL is exposed in the mobile UI"),
     ("mobile/app/src/app/_layout.tsx", "<SpotifyLoginPrompt />"),
     ("mobile/app/src/components/SpotifyLoginPrompt.tsx", "Linking.openURL(url)"),
+    ("mobile/app/src/app/(tabs)/index.tsx", "Wait for Spotify authentication"),
 ]:
     if marker not in (root / relative).read_text(encoding="utf-8"):
         raise SystemExit(f"Post-patch check failed: {marker} not found in {relative}")

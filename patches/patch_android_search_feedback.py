@@ -46,9 +46,25 @@ replace_once(
     "Search timeout state",
 )
 replace_once(
+    """  useEffect(() => {
+    if (!query || query === asked) return;
+    const timer = setTimeout(() => ask(query), TYPE_PAUSE_MS);
+    return () => clearTimeout(timer);
+  }, [query, asked, ask]);""",
+    """  useEffect(() => {
+    if (!spotifyAvailable || !query || query === asked) return;
+    const timer = setTimeout(() => ask(query), TYPE_PAUSE_MS);
+    return () => clearTimeout(timer);
+  }, [query, asked, ask, spotifyAvailable]);""",
+    "Wait for Spotify session before searching",
+)
+
+replace_once(
     "  const search = useChannel('search');",
     """  const search = useChannel('search');
-  const status = useChannel('status');""",
+  const status = useChannel('status');
+  const liked = useChannel('liked');
+  const spotifyAvailable = liked?.available ?? false;""",
     "Status channel subscription",
 )
 replace_once(
@@ -63,14 +79,14 @@ replace_once(
   // error without publishing SearchPayload. Never leave the mobile UI spinning
   // forever; the timeout also exposes the backend's status/error for recovery.
   useEffect(() => {
-    if (!query || !asked || query !== asked || search?.query === query) return;
+    if (!spotifyAvailable || !query || !asked || query !== asked || search?.query === query) return;
     const timer = setTimeout(
       () => setTimedOutQuery(query),
       SEARCH_RESPONSE_TIMEOUT_MS,
     );
     return () => clearTimeout(timer);
-  }, [asked, query, search?.query]);
-  const timedOut = timedOutQuery === query && search?.query !== query;
+  }, [asked, query, search?.query, spotifyAvailable]);
+  const timedOut = spotifyAvailable && timedOutQuery === query && search?.query !== query;
   const statusText = [status?.message, status?.api_error].filter(Boolean).join('\\n');
   const loginUrl = statusText.match(/https?:\\/\\/[^\\s)]+/)?.[0]?.replace(/[.,;]+$/, '') ?? null;
   const submit = () => {""",
@@ -85,12 +101,26 @@ replace_once(
     "Reset timeout when query changes",
 )
 replace_once(
-    """        {query && !results && <Text style={[type.small, styles.status]}>Searching…</Text>}
+    """        {query && !spotifyAvailable && (
+          <View style={[styles.status, styles.timeoutBlock]}>
+            <Text style={type.small}>Connect a Spotify Premium account to search songs, artists and albums.</Text>
+            {status?.message && status.is_error && <Text style={type.small}>{status.message}</Text>}
+            <Pressable
+              onPress={() => send({ SelectSource: 'Spotify' })}
+              style={styles.timeoutButton}
+              accessibilityRole="button">
+              <Text style={[type.bodyBold, { color: colors.accent }]}>Connect Spotify</Text>
+            </Pressable>
+          </View>
+        )}
+        {query && spotifyAvailable && !results && !timedOut && (
+          <Text style={[type.small, styles.status]}>Searching…</Text>
+        )}
         {results && <Results results={results} tab={tab} playingUri={item?.uri ?? null} />}""",
     """        {query && !results && !timedOut && (
           <Text style={[type.small, styles.status]}>Searching…</Text>
         )}
-        {timedOut && (
+        {timedOut && spotifyAvailable && (
           <View style={[styles.status, styles.timeoutBlock]}>
             <Text style={type.small}>
               Spotify did not return results for this search. Check your internet connection and sign in with a Spotify Premium account.
@@ -146,6 +176,8 @@ checks = [
     "Spotify did not return results for this search.",
     "SelectSource: 'Spotify'",
     "Retry search",
+    "Wait for Spotify session before searching",
+    "Connect a Spotify Premium account",
 ]
 for marker in checks:
     if marker not in source:
