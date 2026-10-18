@@ -1,22 +1,95 @@
 name: Build Spotatui Android Release APK
 
 on:
+  schedule:
+    - cron: '23 10 * * *'
   workflow_dispatch:
   push:
     paths:
       - '.github/workflows/build-spotatui-android.yml'
       - 'smoke-test-android.sh'
       - 'patches/**'
+      - 'tools/**'
+      - 'templates/**'
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: spotatui-android-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  check-upstream:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      source_sha: ${expr} steps.check.outputs.source_sha }}
+      should_build: ${expr} steps.check.outputs.should_build }}
+    steps:
+      - name: Compare official source with the last smoke-tested revision
+        id: check
+        uses: actions/github-script@v8
+        env:
+          ANDROID_KEYSTORE_BASE64: ${expr} secrets.ANDROID_KEYSTORE_BASE64 }}
+        with:
+          script: |
+            const upstreamResponse = await github.request('GET /repos/{owner}/{repo}/commits/{ref}', {
+              owner: 'LargeModGames',
+              repo: 'spotatui',
+              ref: 'main',
+            });
+            const upstreamSha = upstreamResponse.data.sha;
+            let previousSha = null;
+            try {
+              const marker = await github.rest.repos.getContent({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                path: 'upstream-source-revision.txt',
+                ref: context.ref_name,
+              });
+              if (!Array.isArray(marker.data) && marker.data.type === 'file') {
+                previousSha = Buffer.from(marker.data.content, 'base64').toString('utf8').trim();
+              }
+            } catch (error) {
+              if (error.status !== 404) throw error;
+            }
+            let hasUpdateableRelease = false;
+            let releaseSourceSha = null;
+            try {
+              const response = await github.rest.repos.getLatestRelease({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+              });
+              hasUpdateableRelease = response.data.assets.some(
+                asset => asset.name === 'spotatui-android-release.apk'
+              );
+              releaseSourceSha = response.data.body?.match(/Upstream source SHA:\s*([a-f0-9]{40})/i)?.[1] ?? null;
+            } catch (error) {
+              if (error.status !== 404) throw error;
+            }
+            const scheduled = context.eventName === 'schedule';
+            const keyConfigured = Boolean(process.env.ANDROID_KEYSTORE_BASE64);
+            const needsFirstSignedRelease = keyConfigured &&
+              (!hasUpdateableRelease || releaseSourceSha !== upstreamSha);
+            const shouldBuild = !scheduled || previousSha !== upstreamSha || needsFirstSignedRelease;
+            core.setOutput('source_sha', upstreamSha);
+            core.setOutput('should_build', String(shouldBuild));
+            await core.summary
+              .addHeading('Spotatui upstream update check')
+              .addTable([
+                [{ data: 'Item', header: true }, { data: 'Value', header: true }],
+                ['Official source SHA', upstreamSha],
+                ['Last smoke-tested SHA', previousSha || 'not verified'],
+                ['Signed Android release', hasUpdateableRelease ? 'available' : 'not published'],
+                ['Build required', String(shouldBuild)],
+              ])
+              .write();
+            if (!shouldBuild) core.info('No new upstream revision or release-signing change requires a scheduled rebuild.');
   build-android:
+    needs: check-upstream
+    if: needs.check-upstream.outputs.should_build == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 90
 
@@ -25,7 +98,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: LargeModGames/spotatui
-          ref: c44f106faa49642832ba224ee01b760cb2351f52
+          ref: ${expr} needs.check-upstream.outputs.source_sha }}
           path: spotatui-source
 
       - name: Get build workflow scripts
@@ -41,6 +114,9 @@ jobs:
         run: |
           set -euo pipefail
           python3 workflow-files/patches/patch_android_stats.py "$GITHUB_WORKSPACE/spotatui-source" "$GITHUB_WORKSPACE/workflow-files/templates/mobile-stats.tsx"
+
+      - name: Add Android release update checker to Settings
+        run: python3 workflow-files/tools/patch_android_updates.py "$GITHUB_WORKSPACE/spotatui-source"
 
       - name: Record exact source revision
         working-directory: spotatui-source
@@ -98,18 +174,27 @@ jobs:
         working-directory: spotatui-source/mobile/app
         run: npm ci
 
-      - name: Configure Android architectures and cleartext loopback
+      - name: Configure Android version and architectures
         working-directory: spotatui-source/mobile/app
+        env:
+          ANDROID_BUILD_NUMBER: ${expr} github.run_number }}
         run: |
           set -euo pipefail
           python3 - <<'PY'
           import json
+          import os
+          import tomllib
           from pathlib import Path
 
           path = Path("app.json")
           config = json.loads(path.read_text())
           expo = config.setdefault("expo", {})
           android = expo.setdefault("android", {})
+          core_version = tomllib.loads(Path("../../Cargo.toml").read_text())["package"]["version"]
+          build_number = int(os.environ["ANDROID_BUILD_NUMBER"])
+          version_name = f"{core_version}-android.{build_number}"
+          expo["version"] = version_name
+          android["versionCode"] = build_number
           android["usesCleartextTraffic"] = True
 
           found_build_properties = False
@@ -124,6 +209,9 @@ jobs:
               raise SystemExit("Expected expo-build-properties plugin was not found; refusing an unverified config.")
 
           path.write_text(json.dumps(config, indent=2) + "\n")
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env:
+              env.write(f"ANDROID_VERSION_NAME={version_name}\n")
+          print(f"Configured Android version {version_name}, versionCode {build_number}, ABIs arm64-v8a/x86_64.")
           PY
 
       - name: Align mobile home helpers with current GUI exports
@@ -241,9 +329,90 @@ jobs:
         working-directory: spotatui-source/mobile/app
         run: npx expo prebuild --platform android --no-install
 
+      - name: Allow cleartext only for the local Rust core
+        working-directory: spotatui-source/mobile/app
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+
+          manifest = Path("android/app/src/main/AndroidManifest.xml")
+          source = manifest.read_text()
+          start = source.find("<application")
+          end = source.find(">", start)
+          if start < 0 or end < 0:
+              raise SystemExit("Could not identify the generated Android application manifest element.")
+          tag = source[start:end]
+          def set_attribute(tag, name, value):
+              pattern = r'\\s+' + re.escape(name) + r'="[^"]*"'
+              if re.search(pattern, tag):
+                  return re.sub(pattern, ' ' + name + '="' + value + '"', tag, count=1)
+              return tag + ' ' + name + '="' + value + '"'
+          tag = set_attribute(tag, "android:networkSecurityConfig", "@xml/network_security_config")
+          tag = set_attribute(tag, "android:usesCleartextTraffic", "true")
+          source = source[:start] + tag + source[end:]
+          manifest.write_text(source)
+
+          xml_dir = Path("android/app/src/main/res/xml")
+          xml_dir.mkdir(parents=True, exist_ok=True)
+          network_config = xml_dir / "network_security_config.xml"
+          network_config.write_text("""<?xml version="1.0" encoding="utf-8"?>
+          <network-security-config>
+            <domain-config cleartextTrafficPermitted="true">
+              <domain includeSubdomains="false">127.0.0.1</domain>
+              <domain includeSubdomains="false">localhost</domain>
+            </domain-config>
+          </network-security-config>
+          """)
+          ET.parse(manifest)
+          ET.parse(network_config)
+          if source.count("android:networkSecurityConfig=") != 1:
+              raise SystemExit("Expected exactly one network security config reference.")
+          print("Installed and validated a loopback-only cleartext network security policy.")
+          PY
+
       - name: Build standalone release APK
         working-directory: spotatui-source/mobile/app/android
         run: ./gradlew --no-daemon --stacktrace clean :app:assembleRelease
+
+      - name: Configure persistent Android release signing
+        id: signing
+        env:
+          ANDROID_KEYSTORE_BASE64: ${expr} secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${expr} secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${expr} secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${expr} secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          values=("$ANDROID_KEYSTORE_BASE64" "$ANDROID_KEYSTORE_PASSWORD" "$ANDROID_KEY_ALIAS" "$ANDROID_KEY_PASSWORD")
+          present=0
+          for value in "${values[@]}"; do
+            [[ -n "$value" ]] && present=$((present + 1))
+          done
+          if [[ "$present" -eq 0 ]]; then
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No persistent Android signing secrets are configured. This build is for CI smoke testing only; no public update release will be published."
+            exit 0
+          fi
+          if [[ "$present" -ne 4 ]]; then
+            echo "::error::Android signing secrets are incomplete. Configure all four ANDROID_KEYSTORE_* / ANDROID_KEY_* secrets."
+            exit 1
+          fi
+          KEYSTORE="$RUNNER_TEMP/spotatui-android-release.jks"
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE"
+          test -s "$KEYSTORE"
+          echo "available=true" >> "$GITHUB_OUTPUT"
+          APK="spotatui-source/mobile/app/android/app/build/outputs/apk/release/app-release.apk"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" sign \
+            --ks "$KEYSTORE" \
+            --ks-key-alias "$ANDROID_KEY_ALIAS" \
+            --ks-pass env:ANDROID_KEYSTORE_PASSWORD \
+            --key-pass env:ANDROID_KEY_PASSWORD \
+            --out "$RUNNER_TEMP/spotatui-android-release-signed.apk" "$APK"
+          mv "$RUNNER_TEMP/spotatui-android-release-signed.apk" "$APK"
+          echo "Android APK signed with the persistent release key."
 
       - name: Verify APK signature, embedded JavaScript, SDK, and native ABIs
         working-directory: spotatui-source/mobile/app/android
@@ -255,6 +424,7 @@ jobs:
           "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | tee "$GITHUB_WORKSPACE/apk-badging.txt"
           grep -q "package: name='com.largemodgames.spotatui'" "$GITHUB_WORKSPACE/apk-badging.txt"
           grep -q "sdkVersion:'26'" "$GITHUB_WORKSPACE/apk-badging.txt"
+          grep -q "versionCode='${{ github.run_number }}'" "$GITHUB_WORKSPACE/apk-badging.txt"
           unzip -Z1 "$APK" | grep -Fxq 'assets/index.android.bundle'
           unzip -Z1 "$APK" | grep -Fxq 'lib/arm64-v8a/libspotatui_mobile.so'
           unzip -Z1 "$APK" | grep -Fxq 'lib/x86_64/libspotatui_mobile.so'
@@ -262,19 +432,6 @@ jobs:
           test "$(wc -c < "$GITHUB_WORKSPACE/index.android.bundle")" -gt 100000
           sha256sum "$APK" | tee "$GITHUB_WORKSPACE/SHA256SUMS.txt"
           cp "$APK" "$GITHUB_WORKSPACE/spotatui-android-release.apk"
-
-      - name: Upload release APK and checksum
-        if: success()
-        uses: actions/upload-artifact@v7
-        with:
-          name: spotatui-android-release-apk
-          path: |
-            spotatui-android-release.apk
-            SHA256SUMS.txt
-            spotatui-source-commit.txt
-            apk-badging.txt
-          if-no-files-found: error
-          retention-days: 14
 
       - name: Validate Android smoke-test script
         run: bash -n workflow-files/smoke-test-android.sh
@@ -309,6 +466,83 @@ jobs:
           disable-linux-hw-accel: false
           disable-animations: true
           script: bash "$GITHUB_WORKSPACE/workflow-files/smoke-test-android.sh"
+
+      - name: Upload tested Android APK artifact
+        if: success()
+        uses: actions/upload-artifact@v7
+        with:
+          name: spotatui-android-${expr} steps.signing.outputs.available == 'true' && 'release' || 'ci-test' }}-apk
+          path: |
+            spotatui-android-release.apk
+            SHA256SUMS.txt
+            spotatui-source-commit.txt
+            apk-badging.txt
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish signed Android update release
+        if: success() && steps.signing.outputs.available == 'true'
+        env:
+          GH_TOKEN: ${expr} github.token }}
+        run: |
+          set -euo pipefail
+          cat > "$GITHUB_WORKSPACE/android-release-notes.md" <<EOF
+          Spotatui Android version $ANDROID_VERSION_NAME
+
+          - Android build number: $GITHUB_RUN_NUMBER
+          - Upstream source SHA: $(cat "$GITHUB_WORKSPACE/spotatui-source-commit.txt")
+          - Android port SHA: $GITHUB_SHA
+          - Supported ABIs: arm64-v8a and x86_64
+
+          This APK is built from the official Spotatui mobile source with Android-specific compatibility patches. SHA-256 is published in SHA256SUMS.txt.
+          EOF
+          gh release create "android-build-$GITHUB_RUN_NUMBER" \
+            "$GITHUB_WORKSPACE/spotatui-android-release.apk" \
+            "$GITHUB_WORKSPACE/SHA256SUMS.txt" \
+            "$GITHUB_WORKSPACE/spotatui-source-commit.txt" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Spotatui Android $ANDROID_VERSION_NAME" \
+            --notes-file "$GITHUB_WORKSPACE/android-release-notes.md"
+
+      - name: Record successfully smoke-tested upstream revision
+        if: success()
+        uses: actions/github-script@v8
+        env:
+          SOURCE_SHA: ${expr} needs.check-upstream.outputs.source_sha }}
+        with:
+          script: |
+            const path = 'upstream-source-revision.txt';
+            const next = process.env.SOURCE_SHA + '\n';
+            let existing = null;
+            let sha = null;
+            try {
+              const response = await github.rest.repos.getContent({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                path,
+                ref: context.ref_name,
+              });
+              if (!Array.isArray(response.data) && response.data.type === 'file') {
+                existing = Buffer.from(response.data.content, 'base64').toString('utf8');
+                sha = response.data.sha;
+              }
+            } catch (error) {
+              if (error.status !== 404) throw error;
+            }
+            if (existing === next) {
+              core.info('The last smoke-tested source revision is already recorded.');
+            } else {
+              await github.rest.repos.createOrUpdateFileContents({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                path,
+                message: 'ci: record smoke-tested upstream Spotatui revision',
+                content: Buffer.from(next).toString('base64'),
+                sha: sha || undefined,
+                branch: context.ref_name,
+              });
+              core.info('Recorded smoke-tested upstream revision ' + process.env.SOURCE_SHA);
+            }
 
       - name: Upload diagnostic logs if smoke test fails
         if: failure()
