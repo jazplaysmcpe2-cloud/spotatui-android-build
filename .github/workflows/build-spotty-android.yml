@@ -18,7 +18,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: spotty-android-${{ github.ref }}-${{ github.sha }}
+  group: spotty-android-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
