@@ -16,7 +16,8 @@ permissions:
   contents: write
 
 concurrency:
-  group: spotatui-android-${{ github.ref }}
+  # Isolate builds per commit so retries of an older SHA cannot cancel/block a newer release.
+  group: spotatui-android-${{ github.ref }}-${{ github.sha }}
   cancel-in-progress: true
 
 jobs:
