@@ -1,0 +1,115 @@
+name: Spotatui Android build failure triage
+
+on:
+  workflow_run:
+    workflows: ["Build Spotatui Android Release APK"]
+    types: [completed]
+
+permissions:
+  actions: write
+  contents: read
+  issues: write
+
+concurrency:
+  group: spotatui-build-triage-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
+  cancel-in-progress: false
+
+jobs:
+  triage:
+    if: github.event.workflow_run.conclusion == 'failure'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Retry once, then open a diagnostic issue
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const run = context.payload.workflow_run;
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const runUrl = run.html_url;
+            const attempt = Number(run.run_attempt || 1);
+
+            const response = await github.rest.actions.listJobsForWorkflowRun({
+              owner,
+              repo,
+              run_id: run.id,
+              per_page: 100,
+            });
+
+            const failedJobs = response.data.jobs.filter(job =>
+              job.conclusion === 'failure' || job.conclusion === 'timed_out'
+            );
+            const failedSteps = failedJobs.flatMap(job =>
+              (job.steps || [])
+                .filter(step => step.conclusion === 'failure' || step.conclusion === 'timed_out')
+                .map(step => ({
+                  job: job.name,
+                  step: step.name,
+                  conclusion: step.conclusion,
+                }))
+            );
+
+            await core.summary
+              .addHeading('Spotatui Android build failure triage')
+              .addLink('Failed workflow run', runUrl)
+              .addTable([
+                [{data: 'Property', header: true}, {data: 'Value', header: true}],
+                ['Run ID', String(run.id)],
+                ['Run attempt', String(attempt)],
+                ['Branch', run.head_branch || '(unknown)'],
+                ['Failed jobs', failedJobs.map(job => job.name).join(', ') || '(none reported)'],
+                ['Failed steps', failedSteps.map(step => step.job + ': ' + step.step).join('; ') || '(none reported)'],
+              ])
+              .write();
+
+            // A single retry handles transient runner/download failures without looping.
+            if (attempt < 2) {
+              await github.rest.actions.reRunFailedJobs({
+                owner,
+                repo,
+                run_id: run.id,
+              });
+              core.info('Requested the only permitted automatic retry for failed jobs.');
+              return;
+            }
+
+            const title = `Android build #${run.run_number} failed after one automatic retry`;
+            const existing = await github.rest.search.issuesAndPullRequests({
+              q: `repo:${owner}/${repo} is:issue is:open "${run.id}" in:title`,
+              per_page: 1,
+            });
+
+            if (existing.data.items.length > 0) {
+              core.info('A diagnostic issue for this run already exists; not creating a duplicate.');
+              return;
+            }
+
+            const stepList = failedSteps.length
+              ? failedSteps.map(step => `- **${step.job}** — ${step.step} (${step.conclusion})`).join('\n')
+              : '- GitHub reported a failed run but no failed steps were returned by the API.';
+
+            await github.rest.issues.create({
+              owner,
+              repo,
+              title: `${title} (run ${run.id})`,
+              body: [
+                'The Android build failed after the one permitted automatic retry.',
+                '',
+                `- Workflow: ${run.name}`,
+                `- Branch: ${run.head_branch || '(unknown)'}`,
+                `- Commit: ${run.head_sha || '(unknown)'}`,
+                `- Run: ${runUrl}`,
+                `- Run ID: ${run.id}`,
+                `- Attempts observed: ${attempt}`,
+                '',
+                '## Failed steps',
+                stepList,
+                '',
+                '## Next action',
+                'Inspect the linked run and its diagnostic artifact/logs, fix the root cause on a separate branch, and require the build and emulator smoke test to pass before merging.',
+                '',
+                'This triage workflow does not alter source code or publish a build automatically. It never prints repository secrets.',
+              ].join('\n'),
+            });
+            core.info('Created a diagnostic issue after the bounded retry was exhausted.');
