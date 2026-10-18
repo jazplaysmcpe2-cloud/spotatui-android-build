@@ -37,6 +37,11 @@ jobs:
       - name: Patch and instrument native Android loopback connection
         run: python3 workflow-files/patches/patch_android_loopback_diagnostics.py "$GITHUB_WORKSPACE/spotatui-source"
 
+      - name: Install native Stats screen and tab
+        run: |
+          set -euo pipefail
+          python3 workflow-files/patches/patch_android_stats.py "$GITHUB_WORKSPACE/spotatui-source" "$GITHUB_WORKSPACE/workflow-files/templates/mobile-stats.tsx"
+
       - name: Record exact source revision
         working-directory: spotatui-source
         run: |
