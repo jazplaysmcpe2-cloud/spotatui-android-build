@@ -94,6 +94,43 @@ jobs:
     timeout-minutes: 90
 
     steps:
+      - name: Validate persistent Android release signing secrets before build
+        id: signing-preflight
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          values=("$ANDROID_KEYSTORE_BASE64" "$ANDROID_KEYSTORE_PASSWORD" "$ANDROID_KEY_ALIAS" "$ANDROID_KEY_PASSWORD")
+          present=0
+          for value in "${values[@]}"; do
+            [[ -n "$value" ]] && present=$((present + 1))
+          done
+
+          if [[ "$present" -eq 0 ]]; then
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No persistent Android signing secrets are configured. Continuing as a CI smoke-test build only."
+            exit 0
+          fi
+          if [[ "$present" -ne 4 ]]; then
+            echo "::error::Android signing secrets are incomplete. Configure all four repository Actions secrets."
+            exit 1
+          fi
+
+          KEYSTORE="$RUNNER_TEMP/spotatui-signing-preflight.jks"
+          CSR="$RUNNER_TEMP/spotatui-signing-preflight.csr"
+          trap 'rm -f "$KEYSTORE" "$CSR"' EXIT
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE"
+          test -s "$KEYSTORE"
+          keytool -list -keystore "$KEYSTORE" -storepass:env ANDROID_KEYSTORE_PASSWORD -alias "$ANDROID_KEY_ALIAS" >/dev/null
+          keytool -certreq -alias "$ANDROID_KEY_ALIAS" -keystore "$KEYSTORE" -storepass:env ANDROID_KEYSTORE_PASSWORD -keypass:env ANDROID_KEY_PASSWORD -file "$CSR" >/dev/null
+          test -s "$CSR"
+          rm -f "$CSR"
+          echo "available=true" >> "$GITHUB_OUTPUT"
+          echo "All four release-signing secrets are present; keystore, alias, store password, and key password passed preflight."
+
       - name: Get official Spotatui source
         uses: actions/checkout@v7
         with:
