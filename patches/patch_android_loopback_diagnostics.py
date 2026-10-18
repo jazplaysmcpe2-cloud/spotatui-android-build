@@ -81,20 +81,19 @@ new_url = """  const url = await SpotatuiCore.start();
         ", bytes=" +
         body.length,
     );
-    // The mobile shell renders React Native screens; gui/dist is intentionally not embedded.
-    // A 503 from "/" means the local core is reachable but has no browser frontend asset,
-    // which is normal for this native app. Continue to the authenticated WebSocket probe.
-    if (!response.ok && response.status !== 503) {
-      throw new Error("HTTP " + response.status);
-    }
+    // The native app does not embed gui/dist, so "/" may return 503. React Native's
+    // HTTP stack may also use an Origin that differs from the server's strict loopback
+    // policy. Any HTTP response proves that a listener answered; only the authenticated
+    // WebSocket handshake decides whether the app connection works.
+    console.info("[Spotatui] Local core HTTP preflight response: status=" + response.status);
   } catch (error) {
+    // Diagnostic-only: a failed fetch must never block the real WebSocket attempt.
     const reason = error instanceof Error ? error.message : String(error);
     let diagnostics = "No Rust logs available.";
     try {
       diagnostics = SpotatuiCore.getDiagnosticTail();
     } catch {}
-    console.error("[Spotatui] Local core HTTP preflight failed: " + reason, diagnostics);
-    throw new Error("Spotatui could not reach its local core over HTTP: " + reason);
+    console.warn("[Spotatui] Local core HTTP preflight unavailable; continuing to WebSocket: " + reason, diagnostics);
   }"""
 if core.count(old_url) != 1:
     raise SystemExit(f"Core URL extraction: expected one match, found {core.count(old_url)}.")
