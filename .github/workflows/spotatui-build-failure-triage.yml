@@ -65,7 +65,7 @@ jobs:
 
             // A single retry handles transient runner/download failures without looping.
             if (attempt < 2) {
-              await github.rest.actions.reRunFailedJobs({
+              await github.rest.actions.reRunWorkflowFailedJobs({
                 owner,
                 repo,
                 run_id: run.id,
