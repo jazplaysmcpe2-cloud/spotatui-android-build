@@ -81,7 +81,12 @@ new_url = """  const url = await SpotatuiCore.start();
         ", bytes=" +
         body.length,
     );
-    if (!response.ok) throw new Error("HTTP " + response.status);
+    // The mobile shell renders React Native screens; gui/dist is intentionally not embedded.
+    // A 503 from "/" means the local core is reachable but has no browser frontend asset,
+    // which is normal for this native app. Continue to the authenticated WebSocket probe.
+    if (!response.ok && response.status !== 503) {
+      throw new Error("HTTP " + response.status);
+    }
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     let diagnostics = "No Rust logs available.";
