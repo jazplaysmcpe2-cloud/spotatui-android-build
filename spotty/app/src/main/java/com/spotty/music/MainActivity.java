@@ -414,11 +414,13 @@ public final class MainActivity extends Activity {
                 try {
                     localBuild = getPackageManager().getPackageInfo(getPackageName(), 0).versionCode;
                 } catch (Exception ignored) {}
+                final int remoteBuildNumber = remoteBuild;
+                final int localBuildNumber = localBuild;
                 prefs.edit().putString("last_update_tag", tag).apply();
                 String notified = prefs.getString("notified_release_tag", "");
                 main.post(() -> {
                     statusText.setText("Update check complete • " + (tag.isEmpty() ? "no release tag" : tag));
-                    if (!tag.isEmpty() && remoteBuild > localBuild && !tag.equals(notified)) {
+                    if (!tag.isEmpty() && remoteBuildNumber > localBuildNumber && !tag.equals(notified)) {
                         prefs.edit().putString("notified_release_tag", tag).apply();
                         new AlertDialog.Builder(this).setTitle(name)
                                 .setMessage((body.isEmpty() ? "A newer Spotty build is available." : body) + "\n\nAndroid requires you to confirm installation; Spotty cannot silently install APK updates.")
