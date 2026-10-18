@@ -77,6 +77,7 @@ public final class MainActivity extends Activity {
     private final List<Track> visibleTracks = new ArrayList<>();
     private int youtubeSearchVersion = 0;
     private final List<Track> playlistTracks = new ArrayList<>();
+    private String importedPlaylistName = "Imported playlist";
     private String activeTheme = "Frutiger Aero";
     private String activeQuality = "Best available";
 
@@ -84,7 +85,9 @@ public final class MainActivity extends Activity {
     public void onCreate(Bundle state) {
         super.onCreate(state);
         applyThemeFromPreferences();
-        String savedPlaylist = getSharedPreferences(PREFS, MODE_PRIVATE).getString("imported_playlist_text", "");
+        SharedPreferences savedPrefs = getSharedPreferences(PREFS, MODE_PRIVATE);
+        String savedPlaylist = savedPrefs.getString("imported_playlist_text", "");
+        importedPlaylistName = savedPrefs.getString("imported_playlist_name", "Imported playlist");
         if (!savedPlaylist.trim().isEmpty()) playlistTracks.addAll(parsePlaylistTracks(savedPlaylist));
         getWindow().setStatusBarColor(BG);
         getWindow().setNavigationBarColor(BG);
@@ -447,7 +450,7 @@ public final class MainActivity extends Activity {
         input.setBackground(roundRect(PANEL_ALT, 12));
         new AlertDialog.Builder(this)
                 .setTitle("Import a playlist")
-                .setMessage("Paste a track list, or choose a Spotify-exported CSV / M3U / text file. A Spotify share URL alone does not grant access to its full track list.")
+                .setMessage("Premium-free import: paste a title/artist list or choose Spotify Playlist*.json / YourLibrary.json, CSV, M3U, or text. To get Spotify JSON, request Download your data → Account data → Playlist, unzip it, then choose the Playlist*.json file. Spotty imports metadata only and searches sources you can play.")
                 .setView(input)
                 .setPositiveButton("Import text", (d, w) -> importPlaylistText(input.getText().toString()))
                 .setNeutralButton("Choose file", (d, w) -> choosePlaylistFile())
@@ -460,7 +463,7 @@ public final class MainActivity extends Activity {
             Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
             intent.addCategory(Intent.CATEGORY_OPENABLE);
             intent.setType("*/*");
-            intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"text/csv", "text/plain", "application/vnd.ms-excel", "audio/x-mpegurl", "application/x-mpegURL"});
+            intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"application/json", "text/json", "text/csv", "text/plain", "application/vnd.ms-excel", "audio/x-mpegurl", "application/x-mpegURL"});
             startActivityForResult(intent, REQUEST_PLAYLIST_FILE);
         } catch (Exception e) {
             statusText.setText("Could not open the file picker.");
@@ -475,7 +478,10 @@ public final class MainActivity extends Activity {
              BufferedReader reader = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8))) {
             StringBuilder contents = new StringBuilder();
             String line;
-            while ((line = reader.readLine()) != null) contents.append(line).append('\n');
+            while ((line = reader.readLine()) != null) {
+                contents.append(line).append('\n');
+                if (contents.length() > 15000000) throw new Exception("Playlist file is too large. Choose a single Playlist*.json file or CSV.");
+            }
             importPlaylistText(contents.toString());
         } catch (Exception e) {
             showError("Playlist import failed: " + shortError(e));
@@ -496,24 +502,179 @@ public final class MainActivity extends Activity {
                     }).setNeutralButton("Choose CSV", (d, w) -> choosePlaylistFile()).setNegativeButton("Cancel", null).show();
             return;
         }
+        if (trimmed.startsWith("{") && importSpotifyExportJson(trimmed)) return;
         List<Track> imported = parsePlaylistTracks(raw);
         if (imported.isEmpty()) {
-            showError("No track rows found. Use a CSV with Track Name and Artist columns, an M3U/text file, or paste one track per line.");
+            showError("No tracks found. Choose Spotify Playlist*.json / YourLibrary.json, a CSV with Track Name and Artist columns, an M3U/text file, or paste one track per line.");
+            return;
+        }
+        applyImportedPlaylist(imported, "Imported playlist");
+    }
+
+    private boolean importSpotifyExportJson(String raw) {
+        try {
+            JSONObject root = new JSONObject(raw);
+            JSONArray playlists = root.optJSONArray("playlists");
+            if (playlists != null) {
+                List<String> names = new ArrayList<>();
+                List<List<Track>> importedPlaylists = new ArrayList<>();
+                for (int i = 0; i < playlists.length(); i++) {
+                    JSONObject playlist = playlists.optJSONObject(i);
+                    if (playlist == null) continue;
+                    String name = jsonString(playlist, "name", "playlistName", "title");
+                    if (name.isEmpty()) name = "Spotify playlist " + (i + 1);
+                    JSONArray items = playlist.optJSONArray("items");
+                    if (items == null) items = playlist.optJSONArray("tracks");
+                    List<Track> tracks = parseSpotifyExportItems(items);
+                    if (!tracks.isEmpty()) {
+                        names.add(name);
+                        importedPlaylists.add(tracks);
+                    }
+                }
+                if (importedPlaylists.isEmpty()) {
+                    showError("This Spotify JSON file contains no track rows. Choose a Playlist*.json export with items.");
+                } else if (importedPlaylists.size() == 1) {
+                    applyImportedPlaylist(importedPlaylists.get(0), names.get(0));
+                } else {
+                    String[] choices = new String[names.size()];
+                    for (int i = 0; i < names.size(); i++) {
+                        choices[i] = names.get(i) + "  •  " + importedPlaylists.get(i).size() + " tracks";
+                    }
+                    new AlertDialog.Builder(this)
+                            .setTitle("Choose a Spotify playlist")
+                            .setItems(choices, (dialog, which) -> {
+                                if (which >= 0 && which < importedPlaylists.size()) {
+                                    applyImportedPlaylist(importedPlaylists.get(which), names.get(which));
+                                }
+                            })
+                            .setNegativeButton("Cancel", null)
+                            .show();
+                }
+                return true;
+            }
+
+            JSONArray tracks = root.optJSONArray("tracks");
+            if (tracks == null) tracks = root.optJSONArray("items");
+            if (tracks != null) {
+                List<Track> imported = parseSpotifyExportItems(tracks);
+                if (imported.isEmpty()) {
+                    showError("No track rows were found in this Spotify JSON file.");
+                } else {
+                    String name = jsonString(root, "name", "playlistName", "title");
+                    if (name.isEmpty()) name = "Spotify export";
+                    applyImportedPlaylist(imported, name);
+                }
+                return true;
+            }
+        } catch (Exception ignored) {
+            // Not a supported Spotify JSON export; continue with CSV / plain-text parsing.
+        }
+        return false;
+    }
+
+    private List<Track> parseSpotifyExportItems(JSONArray items) {
+        List<Track> tracks = new ArrayList<>();
+        if (items == null) return tracks;
+        for (int i = 0; i < items.length() && tracks.size() < 1000; i++) {
+            JSONObject entry = items.optJSONObject(i);
+            if (entry == null) continue;
+            JSONObject track = entry.optJSONObject("track");
+            if (track == null) track = entry.optJSONObject("item");
+            if (track == null) track = entry;
+            String title = jsonString(track, "trackName", "name", "title", "track_name", "track");
+            if (title.isEmpty() && track != entry) {
+                title = jsonString(entry, "trackName", "name", "title", "track_name", "track");
+            }
+            String artist = jsonString(track, "artistName", "artist_name", "artist", "creator", "artists");
+            if (artist.isEmpty() && track != entry) {
+                artist = jsonString(entry, "artistName", "artist_name", "artist", "creator", "artists");
+            }
+            addImportedTrack(tracks, title, artist);
+        }
+        return tracks;
+    }
+
+    private String jsonString(JSONObject object, String... keys) {
+        if (object == null) return "";
+        for (String key : keys) {
+            Object value = object.opt(key);
+            if (value instanceof String) {
+                String result = ((String) value).trim();
+                if (!result.isEmpty() && !"null".equalsIgnoreCase(result)) return result;
+            } else if (value instanceof JSONObject) {
+                String name = ((JSONObject) value).optString("name", "").trim();
+                if (!name.isEmpty() && !"null".equalsIgnoreCase(name)) return name;
+            } else if (value instanceof JSONArray) {
+                JSONArray values = (JSONArray) value;
+                StringBuilder joined = new StringBuilder();
+                for (int i = 0; i < values.length(); i++) {
+                    Object item = values.opt(i);
+                    String name = "";
+                    if (item instanceof JSONObject) name = ((JSONObject) item).optString("name", "").trim();
+                    else if (item instanceof String) name = ((String) item).trim();
+                    if (!name.isEmpty() && !"null".equalsIgnoreCase(name)) {
+                        if (joined.length() > 0) joined.append(", ");
+                        joined.append(name);
+                    }
+                }
+                if (joined.length() > 0) return joined.toString();
+            }
+        }
+        return "";
+    }
+
+    private void applyImportedPlaylist(List<Track> imported, String playlistName) {
+        if (imported == null || imported.isEmpty()) {
+            showError("This playlist contains no importable tracks.");
             return;
         }
         playlistTracks.clear();
         playlistTracks.addAll(imported);
-        getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString("imported_playlist_text", raw).apply();
+        importedPlaylistName = playlistName == null || playlistName.trim().isEmpty()
+                ? "Imported playlist" : playlistName.trim();
+        String normalized = serializePlaylistTracks(playlistTracks);
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                .putString("imported_playlist_text", normalized)
+                .putString("imported_playlist_name", importedPlaylistName)
+                .apply();
         source = "playlist";
         refreshSourceButtons(sourceRow);
         showTracks(playlistTracks, playlistTracks.size() + " imported tracks • tap one to find it on YouTube/Morphe");
-        resultHeading.setText("YOUR IMPORTED PLAYLIST");
+        resultHeading.setText("PLAYLIST • " + importedPlaylistName.toUpperCase(Locale.ROOT));
         statusText.setText("Playlist imported and saved on this device");
+    }
+
+    private String serializePlaylistTracks(List<Track> tracks) {
+        try {
+            JSONObject root = new JSONObject();
+            JSONArray items = new JSONArray();
+            for (Track track : tracks) {
+                JSONObject item = new JSONObject();
+                item.put("title", track.title);
+                item.put("artist", track.artist);
+                items.put(item);
+            }
+            root.put("tracks", items);
+            return root.toString();
+        } catch (Exception e) {
+            StringBuilder fallback = new StringBuilder();
+            for (Track track : tracks) fallback.append(track.title).append(" — ").append(track.artist).append('\n');
+            return fallback.toString();
+        }
     }
 
     private List<Track> parsePlaylistTracks(String raw) {
         List<Track> found = new ArrayList<>();
         if (raw == null) return found;
+        String trimmed = raw.trim();
+        if (trimmed.startsWith("{")) {
+            try {
+                JSONObject root = new JSONObject(trimmed);
+                JSONArray items = root.optJSONArray("tracks");
+                if (items == null) items = root.optJSONArray("items");
+                if (items != null) return parseSpotifyExportItems(items);
+            } catch (Exception ignored) {}
+        }
         String[] lines = raw.replace("\r", "").split("\n");
         int titleIndex = -1, artistIndex = -1;
         if (lines.length > 0) {
@@ -600,7 +761,7 @@ public final class MainActivity extends Activity {
 
     private void loadCurrentSource(String query) {
         if ("playlist".equals(source)) {
-            resultHeading.setText("YOUR IMPORTED PLAYLIST");
+            resultHeading.setText("PLAYLIST • " + importedPlaylistName.toUpperCase(Locale.ROOT));
             showTracks(playlistTracks, playlistTracks.isEmpty()
                     ? "No imported tracks yet. Import a CSV, M3U, or pasted Spotify track list."
                     : playlistTracks.size() + " imported tracks • tap a track to find it on YouTube/Morphe");
