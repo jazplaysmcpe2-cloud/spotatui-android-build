@@ -197,7 +197,7 @@ checks = [
     "Retry search",
     "!spotifyAvailable || !query || query === asked",
     "Connect a Spotify Premium account",
-    "Do not consume a pre-login search submission",
+    "Keep Enter from consuming the query before Spotify has authenticated.",
 ]
 for marker in checks:
     if marker not in source:
