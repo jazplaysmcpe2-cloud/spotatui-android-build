@@ -44,6 +44,7 @@ transcript_component = """function Transcript({ text }: { text: string }) {
   const spotifyUrl = parts.find(
     (part, index) => index % 2 === 1 && isSpotifyAuthUrl(part),
   );
+  const spotifyCode = text.match(/confirm the code\\s+([A-Z0-9-]+)/i)?.[1] ?? null;
 
   const openUrl = (url: string) => {
     const cleanUrl = url.replace(/[),.;]+$/, '');
@@ -68,6 +69,15 @@ transcript_component = """function Transcript({ text }: { text: string }) {
           ),
         )}
       </Text>
+      {spotifyUrl && spotifyCode && (
+        <View style={styles.loginCodeBlock}>
+          <Text style={styles.loginCodeLabel}>Spotify sign-in code</Text>
+          <Text selectable style={styles.loginCode}>{spotifyCode}</Text>
+          <Text style={styles.loginCodeHint}>
+            Long-press the code to copy it, then confirm it in your browser.
+          </Text>
+        </View>
+      )}
       {spotifyUrl && (
         <Pressable
           style={styles.openLoginButton}
@@ -106,6 +116,16 @@ replace_once(
   """  transcriptBlock: { gap: 12 },
   transcript: { fontFamily: fonts.mono, fontSize: 12, lineHeight: 18, color: colors.muted },
   link: { color: colors.accent, textDecorationLine: 'underline' },
+  loginCodeBlock: {
+    gap: 6,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 12,
+  },
+  loginCodeLabel: { fontFamily: fonts.semibold, fontSize: 12, color: colors.muted },
+  loginCode: { fontFamily: fonts.bold, fontSize: 22, letterSpacing: 2, color: colors.text },
+  loginCodeHint: { fontFamily: fonts.regular, fontSize: 12, lineHeight: 18, color: colors.muted },
   openLoginButton: {
     minHeight: 48,
     alignSelf: 'flex-start',
@@ -124,6 +144,8 @@ replace_once(
 path.write_text(source, encoding="utf-8")
 for marker in (
     "accessibilityLabel=\"Open Spotify sign-in in browser\"",
+    "Spotify sign-in code",
+    "const spotifyCode = text.match",
     "Linking.openURL(cleanUrl)",
     "function isSpotifyAuthUrl(url: string)",
     "Could not open the sign-in page.",
