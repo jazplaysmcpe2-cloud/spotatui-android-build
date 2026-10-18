@@ -52,28 +52,28 @@ export default function DiscoverScreen() {
               <Text style={styles.shelfTitle}>{shelf.title}</Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.cards}>
                 {shelf.playlists.map((playlist) => (
-                  <Pressable
-                    key={playlist.uri}
-                    style={styles.card}
-                    onPress={() => router.push({
-                      pathname: '/playlist/[id]',
-                      params: { id: playlist.uri, name: playlist.name, image: playlist.image_url ?? '' },
-                    })}
-                    onLongPress={() => send({ PlayContext: { uri: playlist.uri, offset: null } })}
-                    accessibilityRole="button"
-                    accessibilityLabel={playlist.name}>
+                  <View key={playlist.uri} style={styles.card}>
                     <View style={styles.coverWrap}>
-                      <Cover uri={playlist.image_url} size={144} radius={6} />
+                      <Pressable
+                        onPress={() => router.push({
+                          pathname: '/playlist/[id]',
+                          params: { id: playlist.uri, name: playlist.name, image: playlist.image_url ?? '' },
+                        })}
+                        accessibilityRole="button"
+                        accessibilityLabel={playlist.name}>
+                        <Cover uri={playlist.image_url} size={144} radius={6} />
+                      </Pressable>
                       <Pressable
                         style={styles.play}
                         onPress={() => send({ PlayContext: { uri: playlist.uri, offset: null } })}
+                        accessibilityRole="button"
                         accessibilityLabel={'Play ' + playlist.name}>
                         <Icon name="play" color={colors.onAccent} size={24} />
                       </Pressable>
                     </View>
                     <Text style={styles.cardTitle} numberOfLines={2}>{playlist.name}</Text>
                     <Text style={styles.cardSubtitle} numberOfLines={2}>{playlist.description ?? 'By Spotify'}</Text>
-                  </Pressable>
+                  </View>
                 ))}
               </ScrollView>
             </View>
