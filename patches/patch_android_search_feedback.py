@@ -101,6 +101,8 @@ replace_once(
     "Reset timeout when query changes",
 )
 replace_once(
+    """        {query && !results && <Text style={[type.small, styles.status]}>Searching…</Text>}
+        {results && <Results results={results} tab={tab} playingUri={item?.uri ?? null} />}""",
     """        {query && !spotifyAvailable && (
           <View style={[styles.status, styles.timeoutBlock]}>
             <Text style={type.small}>Connect a Spotify Premium account to search songs, artists and albums.</Text>
@@ -114,10 +116,6 @@ replace_once(
           </View>
         )}
         {query && spotifyAvailable && !results && !timedOut && (
-          <Text style={[type.small, styles.status]}>Searching…</Text>
-        )}
-        {results && <Results results={results} tab={tab} playingUri={item?.uri ?? null} />}""",
-    """        {query && !results && !timedOut && (
           <Text style={[type.small, styles.status]}>Searching…</Text>
         )}
         {timedOut && spotifyAvailable && (
