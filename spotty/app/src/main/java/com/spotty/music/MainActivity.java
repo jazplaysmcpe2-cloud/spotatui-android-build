@@ -75,6 +75,7 @@ public final class MainActivity extends Activity {
     private boolean preparing;
     private Track currentTrack;
     private final List<Track> visibleTracks = new ArrayList<>();
+    private int youtubeSearchVersion = 0;
     private final List<Track> playlistTracks = new ArrayList<>();
     private String activeTheme = "Frutiger Aero";
     private String activeQuality = "Best available";
@@ -615,18 +616,26 @@ public final class MainActivity extends Activity {
      * extract or redistribute YouTube media streams.
      */
     private void loadYoutube(String query) {
+        final int requestVersion = ++youtubeSearchVersion;
         resultHeading.setText(query.isEmpty() ? "POPULAR MUSIC ON YOUTUBE" : "YOUTUBE SEARCH");
         setLoading(query.isEmpty() ? "Finding popular music…" : "Searching YouTube videos and audio…");
         String q = query.isEmpty() ? "music sort:views" : query;
         String[] instances = new String[] {
                 "https://inv.nadeko.net",
                 "https://invidious.nerdvpn.de",
-                "https://yt.chocolatemoo53.com",
+                "https://invidious.nerdvpn.de",
                 "https://invidious.tiekoetter.com"
         };
 
-        // Race the documented public search instances. One unhealthy server must
-        // not block all the others or leave the search spinner running indefinitely.
+        // Offer the direct Morphe/YouTube route while mirrors search in the background.
+        // This prevents an offline third-party catalog from trapping the user on a spinner.
+        main.postDelayed(() -> {
+            if (requestVersion == youtubeSearchVersion && "youtube".equals(source)
+                    && statusText.getText().toString().contains("…")) {
+                showYoutubeFallback(query, null);
+            }
+        }, 8500L);
+
         io.execute(() -> {
             CompletionService<List<Track>> completedSearches = new ExecutorCompletionService<>(io);
             List<Future<List<Track>>> requests = new ArrayList<>();
@@ -650,7 +659,11 @@ public final class MainActivity extends Activity {
                             for (Future<List<Track>> pending : requests) {
                                 if (!pending.isDone()) pending.cancel(true);
                             }
-                            main.post(() -> showTracks(found, found.size() + " results • playback via Morphe YouTube"));
+                            main.post(() -> {
+                                if (requestVersion == youtubeSearchVersion && "youtube".equals(source)) {
+                                    showTracks(found, found.size() + " results • playback via Morphe YouTube");
+                                }
+                            });
                             return;
                         }
                         lastError = new Exception("No matching videos were returned.");
@@ -662,10 +675,18 @@ public final class MainActivity extends Activity {
                 Exception failure = lastError == null
                         ? new Exception("Public search providers timed out or are unavailable.")
                         : lastError;
-                main.post(() -> showYoutubeFallback(query, failure));
+                main.post(() -> {
+                    if (requestVersion == youtubeSearchVersion && "youtube".equals(source)) {
+                        showYoutubeFallback(query, failure);
+                    }
+                });
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                main.post(() -> showYoutubeFallback(query, e));
+                main.post(() -> {
+                    if (requestVersion == youtubeSearchVersion && "youtube".equals(source)) {
+                        showYoutubeFallback(query, e);
+                    }
+                });
             }
         });
     }
@@ -701,11 +722,44 @@ public final class MainActivity extends Activity {
     }
 
     private void showYoutubeFallback(String query, Exception e) {
-        showError("YouTube catalog search is temporarily unavailable: " + shortError(e));
-        TextView fallback = text("Open this search in Morphe YouTube  ↗", 14, ACCENT, true);
-        fallback.setPadding(dp(8), dp(12), dp(8), dp(16));
-        fallback.setOnClickListener(v -> openYoutubeSearch(query));
-        resultsList.addView(fallback);
+        resultsList.removeAllViews();
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(18), dp(18), dp(18), dp(18));
+        panel.setBackground(panelCardDrawable());
+
+        TextView symbol = text("♫  DISCOVER WITHOUT LIMITS", 11, ACCENT, true);
+        symbol.setLetterSpacing(0.08f);
+        panel.addView(symbol);
+
+        TextView headline = text(e == null ? "Search directly in Morphe" : "YouTube search mirrors are offline", 19, TEXT, true);
+        headline.setMaxLines(2);
+        LinearLayout.LayoutParams headlineLp = new LinearLayout.LayoutParams(-1, -2);
+        headlineLp.topMargin = dp(10);
+        panel.addView(headline, headlineLp);
+
+        TextView detail = text(e == null
+                ? "You can keep searching while Spotty checks its community catalog providers."
+                : "Community catalog servers can go offline. Your search can still open directly in Morphe YouTube or the installed YouTube handler.",
+                13, MUTED, false);
+        LinearLayout.LayoutParams detailLp = new LinearLayout.LayoutParams(-1, -2);
+        detailLp.topMargin = dp(7);
+        panel.addView(detail, detailLp);
+
+        Button direct = button("Open Morphe / YouTube search  ↗", ACCENT, BG);
+        direct.setOnClickListener(v -> openYoutubeSearch(query));
+        LinearLayout.LayoutParams directLp = new LinearLayout.LayoutParams(-1, dp(48));
+        directLp.topMargin = dp(16);
+        panel.addView(direct, directLp);
+
+        TextView retry = text("Retry catalog search", 13, TEXT, true);
+        retry.setGravity(Gravity.CENTER);
+        retry.setPadding(dp(10), dp(13), dp(10), dp(5));
+        retry.setOnClickListener(v -> loadYoutube(query));
+        panel.addView(retry);
+
+        resultsList.addView(panel, new LinearLayout.LayoutParams(-1, -2));
+        statusText.setText(e == null ? "Direct search ready" : "Mirror search unavailable • direct search ready");
     }
 
     private void openYoutubeSearch(String query) {
