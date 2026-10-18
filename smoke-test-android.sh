@@ -34,6 +34,36 @@ adb wait-for-device
 adb devices -l
 adb install -r "$APK"
 
+tap_text_center() {
+  local ui_xml="$1"
+  local target_text="$2"
+  local coords
+
+  coords="$(python3 - "$ui_xml" "$target_text" <<'PY'
+import re
+import sys
+import xml.etree.ElementTree as ET
+
+path, target = sys.argv[1], sys.argv[2]
+root = ET.parse(path).getroot()
+for node in root.iter("node"):
+    if (node.attrib.get("text") or "").strip() != target:
+        continue
+    match = re.fullmatch(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", node.attrib.get("bounds", ""))
+    if not match:
+        continue
+    left, top, right, bottom = map(int, match.groups())
+    print((left + right) // 2, (top + bottom) // 2)
+    raise SystemExit(0)
+raise SystemExit(1)
+PY
+)" || return 1
+
+  local x y
+  read -r x y <<< "$coords"
+  adb shell input tap "$x" "$y"
+}
+
 for round in 1 2; do
   echo "Cold-start test ${round}/2"
   adb shell am force-stop "$PACKAGE"
@@ -91,6 +121,27 @@ for round in 1 2; do
   adb shell cat /sdcard/spotatui-window.xml > "$UI_XML" 2>/dev/null || true
   adb exec-out screencap -p > "$SCREENSHOT" 2>/dev/null || true
 
+  # A clean install first asks whether to join the optional global song counter.
+  # Answer No (privacy-preserving default) so the smoke test reaches Spotify auth instead
+  # of incorrectly requiring auth controls on the preceding consent question.
+  if grep -Fq 'Global Song Counter' "$UI_XML" && grep -Fq 'Would you like to participate?' "$UI_XML"; then
+    if ! tap_text_center "$UI_XML" "No"; then
+      echo "ERROR: Found the initial Global Song Counter prompt but could not locate its No button." >&2
+      cat "$UI_XML" >&2 || true
+      exit 1
+    fi
+    echo "Selected No for the optional Global Song Counter prompt on fresh install."
+    for attempt in $(seq 1 20); do
+      sleep 2
+      timeout 20s adb shell uiautomator dump /sdcard/spotatui-window.xml >/dev/null 2>&1 || true
+      adb shell cat /sdcard/spotatui-window.xml > "$UI_XML" 2>/dev/null || true
+      if grep -Fq 'Open Spotify sign-in in browser' "$UI_XML" && grep -Fq 'Spotify sign-in code' "$UI_XML"; then
+        break
+      fi
+    done
+    adb exec-out screencap -p > "$SCREENSHOT" 2>/dev/null || true
+  fi
+
   if [[ "$ready" -ne 1 ]]; then
     echo "ERROR: App did not reach a resumed foreground activity within 120 seconds in round ${round}." >&2
     echo '--- Activity state ---' >&2
@@ -124,6 +175,22 @@ for round in 1 2; do
     cat "$UI_XML" >&2 || true
     echo "--- Recent application diagnostics ---" >&2
     grep -Ei 'spotatui|ReactNativeJS|GUI:|WebSocket|preflight|FATAL EXCEPTION|error|warn' "$LOGCAT" | tail -n 300 >&2 || true
+    exit 1
+  fi
+
+  # pm clear above guarantees a fresh, logged-out app state for each round.
+  # The phone must expose a direct Android-friendly action for Spotify's device pairing flow.
+  if ! grep -Fq 'Open Spotify sign-in in browser' "$UI_XML"; then
+    echo "ERROR: Fresh install did not expose the Spotify sign-in action in cold-start round ${round}." >&2
+    cat "$UI_XML" >&2 || true
+    grep -Ei 'spotatui|ReactNativeJS|GUI:|WebSocket|FATAL EXCEPTION|error|warn' "$LOGCAT" | tail -n 300 >&2 || true
+    exit 1
+  fi
+
+  if ! grep -Fq 'Spotify sign-in code' "$UI_XML"; then
+    echo "ERROR: Fresh install did not expose a selectable Spotify pairing code in cold-start round ${round}." >&2
+    cat "$UI_XML" >&2 || true
+    grep -Ei 'spotatui|ReactNativeJS|GUI:|WebSocket|FATAL EXCEPTION|error|warn' "$LOGCAT" | tail -n 300 >&2 || true
     exit 1
   fi
 

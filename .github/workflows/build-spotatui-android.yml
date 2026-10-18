@@ -149,6 +149,9 @@ jobs:
         run: python3 workflow-files/patches/patch_android_loopback_diagnostics.py "$GITHUB_WORKSPACE/spotatui-source"
       - name: Add Android Spotify search timeout and reconnect controls
         run: python3 workflow-files/patches/patch_android_search_feedback.py "$GITHUB_WORKSPACE/spotatui-source"
+      - name: Make Android Spotify device authorization explicit
+        run: python3 workflow-files/patches/patch_android_onboarding_auth.py "$GITHUB_WORKSPACE/spotatui-source"
+        # The smoke test validates the CTA and the selectable pairing code on a fresh install.
 
       - name: Install native Stats screen and tab
         run: |
@@ -533,7 +536,7 @@ jobs:
           retention-days: 14
 
       - name: Publish signed Android update release
-        if: success() && steps.signing.outputs.available == 'true'
+        if: success() && steps.signing.outputs.available == 'true' && github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
