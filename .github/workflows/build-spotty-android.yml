@@ -135,7 +135,7 @@ jobs:
           disable-linux-hw-accel: false
           disable-animations: true
           script: |
-            set -euo pipefail
+            bash -euo pipefail <<'SPOTTY_SMOKE'
             APK="$GITHUB_WORKSPACE/release-output/spotty-android-release.apk"
             adb install "$APK"
             adb logcat -c
@@ -152,6 +152,7 @@ jobs:
               echo "Spotty crashed in the emulator."
               exit 1
             fi
+            SPOTTY_SMOKE
 
       - name: Upload built and tested Spotty APK
         if: always() && hashFiles('release-output/spotty-android-release.apk') != ''
