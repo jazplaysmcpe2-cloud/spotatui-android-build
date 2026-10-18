@@ -2,7 +2,7 @@ name: Build Spotty Android APK
 
 on:
   push:
-    branches: [main, spotty-independent]
+    branches: [main]
     paths:
       - 'spotty/**'
       - '.github/workflows/build-spotty-android.yml'
