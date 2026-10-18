@@ -21,25 +21,28 @@ jobs:
 
     steps:
       - name: Get official Spotatui source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: LargeModGames/spotatui
-          ref: main
+          # Pin the exact upstream revision used by the last successful APK build.
+          # Update this SHA deliberately after the newer revision passes all checks.
+          ref: c44f106faa49642832ba224ee01b760cb2351f52
           path: spotatui-source
 
       - name: Record exact source revision
         working-directory: spotatui-source
         run: |
+          set -euo pipefail
           git rev-parse HEAD | tee "$GITHUB_WORKSPACE/spotatui-source-commit.txt"
 
       - name: Set up Java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '17'
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '22'
           cache: npm
@@ -48,14 +51,11 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
         with:
-          # Explicitly avoid the action defaulting to the obsolete SDK package "tools".
           packages: platform-tools
 
       - name: Install Android SDK, emulator, and NDK
         run: |
           set -euo pipefail
-          # setup-android@v4 already accepts the SDK licenses; do not pipe yes into sdkmanager
-          # under pipefail, which can treat yes receiving SIGPIPE as a failed build.
           sdkmanager --install \
             "platform-tools" \
             "platforms;android-36" \
@@ -66,12 +66,12 @@ jobs:
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.1.12297006" >> "$GITHUB_ENV"
 
       - name: Set up Rust for phone and emulator architectures
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.99.1
         with:
           targets: aarch64-linux-android,x86_64-linux-android
 
       - name: Install cargo-ndk
-        run: cargo install cargo-ndk --locked
+        run: cargo install cargo-ndk --version 4.1.2 --locked
 
       - name: Build optimized native Android core
         working-directory: spotatui-source/mobile/core
@@ -163,7 +163,7 @@ jobs:
       - name: Prevent an indefinite font-loading splash
         working-directory: spotatui-source/mobile/app
         run: |
-          set -eu
+          set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
 
@@ -242,87 +242,10 @@ jobs:
           sha256sum "$APK" | tee "$GITHUB_WORKSPACE/SHA256SUMS.txt"
           cp "$APK" "$GITHUB_WORKSPACE/spotatui-android-release.apk"
 
-      - name: Smoke-test standalone APK in Android emulator (two cold starts)
-        uses: ReactiveCircus/android-emulator-runner@v2
-        with:
-          api-level: 36
-          target: google_apis
-          arch: x86_64
-          profile: pixel_6
-          disable-animations: true
-          script: |
-            set -euo pipefail
-            APK="$GITHUB_WORKSPACE/spotatui-android-release.apk"
-            adb install -r "$APK"
-
-            for round in 1 2; do
-              echo "Cold-start test $round/2"
-              adb shell am force-stop com.largemodgames.spotatui
-              adb shell pm clear com.largemodgames.spotatui >/dev/null
-              adb logcat -c
-              adb shell monkey -p com.largemodgames.spotatui 1
-
-              ready=0
-              UI_XML="$GITHUB_WORKSPACE/spotatui-ui-round-${round}.xml"
-              LOGCAT="$GITHUB_WORKSPACE/spotatui-logcat-round-${round}.txt"
-              SCREENSHOT="$GITHUB_WORKSPACE/spotatui-screen-round-${round}.png"
-              ACTIVITY="$GITHUB_WORKSPACE/spotatui-activity-round-${round}.txt"
-
-              for attempt in $(seq 1 40); do
-                sleep 3
-                # A failed dump should not hide the underlying launch/crash diagnostic.
-                adb shell uiautomator dump /sdcard/spotatui-window.xml >/dev/null 2>&1 || true
-                adb shell cat /sdcard/spotatui-window.xml > "$UI_XML" 2>/dev/null || true
-
-                # Do not hard-code English screen labels: onboarding text changes with
-                # Spotify/core state. A non-empty accessible text/content description
-                # from the app's own window is a more reliable ready signal.
-                if [ -s "$UI_XML" ] \
-                  && grep -q 'package="com.largemodgames.spotatui"' "$UI_XML" \
-                  && grep -Eiq 'text="[^"]{2,}"|content-desc="[^"]{2,}"' "$UI_XML"; then
-                  ready=1
-                  break
-                fi
-
-                if ! adb shell pidof com.largemodgames.spotatui >/dev/null 2>&1; then
-                  echo "App process is not running yet during cold-start round $round (attempt $attempt)."
-                fi
-              done
-
-              # Always collect diagnostics before deciding whether to fail this round.
-              adb logcat -d -v threadtime > "$LOGCAT"
-              adb shell dumpsys activity activities > "$ACTIVITY" 2>&1 || true
-              adb exec-out screencap -p > "$SCREENSHOT" 2>/dev/null || true
-
-              if [ "$ready" -ne 1 ]; then
-                echo "App did not expose an accessible screen in cold-start round $round."
-                echo "--- UI hierarchy (first 120 lines) ---"
-                sed -n '1,120p' "$UI_XML" 2>/dev/null || true
-                echo "--- Resumed Android activities ---"
-                grep -E 'ResumedActivity|topResumedActivity|mResumedActivity' "$ACTIVITY" || true
-                echo "--- Recent emulator logcat ---"
-                tail -n 300 "$LOGCAT"
-                exit 1
-              fi
-
-              # Only fail on an exception that belongs to this app, not an unrelated
-              # background/system process in the emulator image.
-              if grep -A 24 -B 3 -E 'FATAL EXCEPTION|UnsatisfiedLinkError|dlopen failed' "$LOGCAT" \
-                | grep -q 'com.largemodgames.spotatui'; then
-                echo "Fatal Android/native-library error found in Spotatui round $round."
-                tail -n 300 "$LOGCAT"
-                exit 1
-              fi
-              if ! adb shell pidof com.largemodgames.spotatui >/dev/null 2>&1; then
-                echo "App process was not alive after reaching a screen in round $round."
-                exit 1
-              fi
-              echo "Cold-start test $round passed."
-            done
-
+      # Preserve the built APK even when the emulator/test runner fails.
       - name: Upload release APK and checksum
         if: success()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: spotatui-android-release-apk
           path: |
@@ -333,9 +256,130 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+
+      # Enable / verify KVM before the emulator action checks /dev/kvm. Without
+      # this, the action silently falls back to unaccelerated emulation and can
+      # spend ten minutes timing out while ADB remains offline.
+      - name: Enable and verify KVM for Android emulator
+        run: |
+          set -euo pipefail
+          if [ ! -e /dev/kvm ]; then
+            echo "::error::This runner does not expose /dev/kvm; hardware-accelerated Android emulator testing is unavailable."
+            exit 1
+          fi
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sudo chmod 0666 /dev/kvm
+          test -r /dev/kvm
+          test -w /dev/kvm
+          ls -l /dev/kvm
+          "$ANDROID_HOME/emulator/emulator" -accel-check
+
+      - name: Smoke-test standalone APK in Android emulator (two cold starts)
+        uses: ReactiveCircus/android-emulator-runner@v2
+        with:
+          api-level: 36
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          cores: 4
+          ram-size: 4096M
+          emulator-boot-timeout: 600
+          # swiftshader_indirect was deprecated in emulator 36.4.9; use swiftshader.
+          emulator-options: -no-window -gpu swiftshader -no-snapshot -noaudio -no-boot-anim
+          disable-linux-hw-accel: false
+          disable-animations: true
+          script: |
+            # ReactiveCircus/android-emulator-runner executes this using POSIX sh/Dash.
+            # Do not use Bash-only options such as pipefail here.
+            set -eu
+            APK="$GITHUB_WORKSPACE/spotatui-android-release.apk"
+            PACKAGE="com.largemodgames.spotatui"
+            adb wait-for-device
+            adb install -r "$APK"
+
+            for round in 1 2; do
+              echo "Cold-start test $round/2"
+              adb shell am force-stop "$PACKAGE"
+              adb shell pm clear "$PACKAGE"
+              adb logcat -c
+
+              # Resolve the app's actual MAIN/LAUNCHER activity rather than relying
+              # on the timing/exit behavior of monkey.
+              if ! start_output=$(adb shell am start -W -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -p "$PACKAGE" 2>&1); then
+                echo "Launch command failed for cold-start round $round."
+                printf '%s\n' "$start_output"
+                adb logcat -d -v threadtime | tail -n 250 || true
+                exit 1
+              fi
+              printf '%s\n' "$start_output"
+              if ! printf '%s\n' "$start_output" | grep -q 'Status: ok'; then
+                echo "Android did not report a successful launcher start for round $round."
+                adb logcat -d -v threadtime | tail -n 250 || true
+                exit 1
+              fi
+
+              ready=0
+              for attempt in $(seq 1 60); do
+                sleep 2
+                if adb shell pidof "$PACKAGE" >/dev/null 2>&1; then
+                  if adb shell dumpsys activity activities 2>/dev/null \
+                    | grep -E 'mResumedActivity|topResumedActivity|ResumedActivity' \
+                    | grep -Fq "$PACKAGE"; then
+                    ready=1
+                    break
+                  fi
+                fi
+              done
+
+              # Let early JS/native startup errors surface, then collect fresh logs.
+              if [ "$ready" -eq 1 ]; then sleep 8; fi
+              LOGCAT="$GITHUB_WORKSPACE/spotatui-logcat-round-${round}.txt"
+              ACTIVITY="$GITHUB_WORKSPACE/spotatui-activity-round-${round}.txt"
+              UI_XML="$GITHUB_WORKSPACE/spotatui-ui-round-${round}.xml"
+              SCREENSHOT="$GITHUB_WORKSPACE/spotatui-screen-round-${round}.png"
+              adb logcat -d -v threadtime > "$LOGCAT"
+              adb shell dumpsys activity activities > "$ACTIVITY" 2>&1 || true
+              timeout 20s adb shell uiautomator dump /sdcard/spotatui-window.xml >/dev/null 2>&1 || true
+              adb shell cat /sdcard/spotatui-window.xml > "$UI_XML" 2>/dev/null || true
+              adb exec-out screencap -p > "$SCREENSHOT" 2>/dev/null || true
+
+              if [ "$ready" -ne 1 ]; then
+                echo "App did not reach a resumed foreground activity within 120 seconds in round $round."
+                echo "--- Activity state ---"
+                grep -E 'ResumedActivity|topResumedActivity|mResumedActivity|com\.largemodgames\.spotatui' "$ACTIVITY" | tail -n 80 || true
+                echo "--- Recent logcat ---"
+                tail -n 300 "$LOGCAT" || true
+                exit 1
+              fi
+
+              # Fail only when crash/native-link diagnostics are tied to this app.
+              if grep -A 30 -B 3 -E 'FATAL EXCEPTION|UnsatisfiedLinkError|dlopen failed' "$LOGCAT" \
+                | grep -Fq "$PACKAGE"; then
+                echo "Fatal Java/native startup error found in Spotatui round $round."
+                tail -n 300 "$LOGCAT"
+                exit 1
+              fi
+              if ! adb shell pidof "$PACKAGE" >/dev/null 2>&1; then
+                echo "Spotatui process exited after launch in cold-start round $round."
+                tail -n 300 "$LOGCAT"
+                exit 1
+              fi
+              if ! adb shell dumpsys activity activities 2>/dev/null \
+                | grep -E 'mResumedActivity|topResumedActivity|ResumedActivity' \
+                | grep -Fq "$PACKAGE"; then
+                echo "Spotatui no longer owns the resumed activity after startup in round $round."
+                tail -n 300 "$ACTIVITY" || true
+                tail -n 300 "$LOGCAT"
+                exit 1
+              fi
+              echo "Cold-start test $round passed."
+            done
+
       - name: Upload diagnostic logs if smoke test fails
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: spotatui-android-smoke-test-diagnostics
           path: |
