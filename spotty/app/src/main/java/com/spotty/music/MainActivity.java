@@ -504,7 +504,7 @@ public final class MainActivity extends Activity {
                     String url = item.optString("url_resolved", "");
                     if (url.isEmpty()) url = item.optString("url", "");
                     String name = item.optString("name", "Internet radio");
-                    if (url.isEmpty() || !(url.startsWith("https://") || url.startsWith("http://"))) continue;
+                    if (url.isEmpty() || !url.startsWith("https://")) continue;
                     String tags = item.optString("tags", "");
                     String country = item.optString("country", "");
                     String extra = tags.isEmpty() ? country : tags;
