@@ -47,6 +47,9 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # Explicitly avoid the action defaulting to the obsolete SDK package "tools".
+          packages: platform-tools
 
       - name: Install Android SDK, emulator, and NDK
         run: |
