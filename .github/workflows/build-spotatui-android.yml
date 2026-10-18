@@ -163,7 +163,7 @@ jobs:
       - name: Prevent an indefinite font-loading splash
         working-directory: spotatui-source/mobile/app
         run: |
-          set -euo pipefail
+          set -eu
           python3 - <<'PY'
           from pathlib import Path
 
