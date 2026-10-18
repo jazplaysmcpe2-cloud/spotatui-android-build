@@ -386,17 +386,39 @@ public final class MainActivity extends Activity {
         statusText.setText("Checking Spotty updates…");
         io.execute(() -> {
             try {
-                JSONObject release = requestJsonObject("https://api.github.com/repos/jazplaysmcpe2-cloud/spotatui-android-build/releases/latest");
+                JSONArray releases = requestJsonArray("https://api.github.com/repos/jazplaysmcpe2-cloud/spotatui-android-build/releases?per_page=100");
+                JSONObject release = null;
+                for (int i = 0; i < releases.length(); i++) {
+                    JSONObject candidate = releases.optJSONObject(i);
+                    if (candidate != null && candidate.optString("tag_name", "").startsWith("spotty-android-")) {
+                        release = candidate;
+                        break;
+                    }
+                }
+                long now = System.currentTimeMillis();
+                prefs.edit().putLong("last_update_check", now).apply();
+                if (release == null) {
+                    main.post(() -> statusText.setText("Update check complete • no Spotty release published yet"));
+                    return;
+                }
                 String tag = release.optString("tag_name", "");
                 String name = release.optString("name", "Spotty update");
                 String url = release.optString("html_url", "https://github.com/jazplaysmcpe2-cloud/spotatui-android-build/releases");
                 String body = release.optString("body", "");
-                long now = System.currentTimeMillis();
-                prefs.edit().putLong("last_update_check", now).putString("last_update_tag", tag).apply();
+                int remoteBuild = 0;
+                try {
+                    String[] tagParts = tag.substring("spotty-android-".length()).split("-");
+                    remoteBuild = Integer.parseInt(tagParts[0]);
+                } catch (Exception ignored) {}
+                int localBuild = 1;
+                try {
+                    localBuild = getPackageManager().getPackageInfo(getPackageName(), 0).versionCode;
+                } catch (Exception ignored) {}
+                prefs.edit().putString("last_update_tag", tag).apply();
                 String notified = prefs.getString("notified_release_tag", "");
                 main.post(() -> {
                     statusText.setText("Update check complete • " + (tag.isEmpty() ? "no release tag" : tag));
-                    if (!tag.isEmpty() && !tag.equals(notified)) {
+                    if (!tag.isEmpty() && remoteBuild > localBuild && !tag.equals(notified)) {
                         prefs.edit().putString("notified_release_tag", tag).apply();
                         new AlertDialog.Builder(this).setTitle(name)
                                 .setMessage((body.isEmpty() ? "A newer Spotty build is available." : body) + "\n\nAndroid requires you to confirm installation; Spotty cannot silently install APK updates.")
@@ -868,7 +890,10 @@ public final class MainActivity extends Activity {
                 card.setOnClickListener(v -> playTrack(track));
                 LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(-1, -2);
                 cardLp.bottomMargin = dp(8);
+                card.setAlpha(0f);
+                card.setTranslationY(dp(8));
                 resultsList.addView(card, cardLp);
+                card.animate().alpha(1f).translationY(0f).setDuration(180).start();
             }
         }
         statusText.setText(status);
@@ -954,6 +979,7 @@ public final class MainActivity extends Activity {
             String lowerName = name.toLowerCase(Locale.ROOT);
             if (forPlayback && (lowerName.endsWith(".aiff") || lowerName.endsWith(".alac"))) rank = -1;
             long size = file.optLong("size", 0L);
+            if (rank < 0) continue;
             if (rank > bestRank || (rank == bestRank && size > bestSize)) {
                 best = file; bestRank = rank; bestSize = size;
             }
