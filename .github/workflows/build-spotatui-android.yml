@@ -100,6 +100,7 @@ jobs:
           repository: LargeModGames/spotatui
           ref: ${{ needs.check-upstream.outputs.source_sha }}
           path: spotatui-source
+          persist-credentials: false
 
       - name: Get build workflow scripts
         uses: actions/checkout@v7
@@ -153,6 +154,7 @@ jobs:
             "system-images;android-36;google_apis;x86_64" \
             "ndk;27.1.12297006"
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.1.12297006" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/27.1.12297006" >> "$GITHUB_ENV"
 
       - name: Set up Rust for phone and emulator architectures
         uses: dtolnay/rust-toolchain@stable
@@ -161,6 +163,17 @@ jobs:
 
       - name: Install cargo-ndk
         run: cargo install cargo-ndk --version 4.1.2 --locked
+
+      - name: Cache Rust dependencies and Android core
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            spotatui-source/mobile/core/target
+          key: cargo-android-${{ runner.os }}-${{ hashFiles('spotatui-source/mobile/core/Cargo.lock') }}
+          restore-keys: |
+            cargo-android-${{ runner.os }}-
 
       - name: Build optimized native Android core
         working-directory: spotatui-source/mobile/core
