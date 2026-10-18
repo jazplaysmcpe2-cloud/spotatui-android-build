@@ -33,3 +33,20 @@ The APK is at `spotty/app/build/outputs/apk/debug/app-debug.apk`. The GitHub Act
 - Morphe is a separate third-party patching project; install it only from its official project/documentation and review its permissions and patches.
 - Public search instances and streaming providers can change or go offline.
 - No Spotify subscription, Spotify credentials, or Spotify account are needed.
+
+
+## Playlists, audio quality and downloads
+
+Use **Import playlist** to open a CSV/M3U/text playlist or paste track rows. A common Spotify playlist-export CSV with `Track Name` and `Artist Name(s)` columns is supported. A Spotify share URL by itself is not a portable track-list export: Spotify's playlist-items API uses OAuth and has access restrictions. Imported rows are saved locally; selecting a row searches that title/artist on YouTube and hands it to Morphe/YouTube.
+
+## Themes and quality preferences
+
+Themes include Frutiger Aero (default), Midwest Emo, Synthwave, Vaporwave, Cyberpunk, Aurora Forest and AMOLED. Audio quality preferences choose among files the licensed provider offers; they cannot increase an encoded file's quality. Lossless formats or 320 kbps are available only when the actual source file supplies them.
+
+## Download rules
+
+The **Download licensed audio** action appears only on Internet Archive results. Before queueing the download, Spotty checks the item's metadata for a Creative Commons or public-domain license and then downloads the best supported audio file matching your quality preference. It does not download protected Spotify tracks or extract YouTube audio/video.
+
+## Updates
+
+On app launches, Spotty checks the GitHub releases feed no more than once every 30 days (or when requested in Settings). It links to a release when a new tag is available; Android still requires the user to confirm any APK installation. The build workflow runs a monthly on the first day, builds the current default-branch revision, smoke-tests it on an Android API 35 emulator, captures an emulator screenshot, and publishes a release only if all checks pass. Dependabot checks GitHub Actions dependencies monthly.
