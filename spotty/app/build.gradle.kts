@@ -2,6 +2,9 @@ plugins {
     id("com.android.application")
 }
 
+// Match release tag/run number so Spotty can identify newer releases accurately.
+val spottyCiBuildNumber = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull()?.coerceAtLeast(1) ?: 1
+
 android {
     namespace = "com.spotty.music"
     compileSdk = 35
@@ -10,8 +13,8 @@ android {
         applicationId = "com.spotty.music"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = spottyCiBuildNumber
+        versionName = "0.1.0+$spottyCiBuildNumber"
     }
 
     compileOptions {
