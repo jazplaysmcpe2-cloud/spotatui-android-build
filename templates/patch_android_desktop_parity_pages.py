@@ -19,6 +19,7 @@ screens = {
     "mobile-recently-played.tsx": "mobile/app/src/app/recently-played.tsx",
     "mobile-session.tsx": "mobile/app/src/app/session.tsx",
     "mobile-party.tsx": "mobile/app/src/app/party.tsx",
+    "mobile-show.tsx": "mobile/app/src/app/show/[id].tsx",
     "mobile-more.tsx": "mobile/app/src/app/(tabs)/more.tsx",
 }
 for template_name, source_path in screens.items():
@@ -30,6 +31,14 @@ for template_name, source_path in screens.items():
         raise SystemExit(f"Native page already exists; refusing to overwrite blindly: {source_path}")
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(template, destination)
+
+library_path = root / "mobile/app/src/app/(tabs)/library.tsx"
+library = library_path.read_text()
+old_show_open = "onPress={() => play(show.uri)}"
+new_show_open = """onPress={() => show.id && router.push({ pathname: '/show/[id]', params: { id: show.id, name: show.name, image: show.image_url ?? '' } })}"""
+if library.count(old_show_open) != 1:
+    raise SystemExit("Saved podcast open handler changed upstream; refusing a blind patch.")
+library_path.write_text(library.replace(old_show_open, new_show_open, 1))
 
 tabs_path = root / "mobile/app/src/app/(tabs)/_layout.tsx"
 tabs = tabs_path.read_text()
@@ -56,7 +65,8 @@ extra_screens = '''
               <Stack.Screen name="discover" />
               <Stack.Screen name="recently-played" />
               <Stack.Screen name="session" />
-              <Stack.Screen name="party" />'''
+              <Stack.Screen name="party" />
+              <Stack.Screen name="show/[id]" />'''
 layout_path.write_text(layout.replace(settings_screen, settings_screen + extra_screens, 1))
 
 print("Installed Discover, Recently Played, Session, Party, and More navigation screens.")
