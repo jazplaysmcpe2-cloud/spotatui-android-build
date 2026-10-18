@@ -28,6 +28,12 @@ jobs:
           ref: c44f106faa49642832ba224ee01b760cb2351f52
           path: spotatui-source
 
+      - name: Get build workflow scripts
+        uses: actions/checkout@v7
+        with:
+          path: workflow-files
+          persist-credentials: false
+
       - name: Record exact source revision
         working-directory: spotatui-source
         run: |
@@ -263,7 +269,7 @@ jobs:
           retention-days: 14
 
       - name: Validate Android smoke-test script
-        run: bash -n smoke-test-android.sh
+        run: bash -n workflow-files/smoke-test-android.sh
 
       - name: Enable and verify KVM for Android emulator
         run: |
@@ -294,7 +300,7 @@ jobs:
           emulator-options: -no-window -gpu swiftshader -no-snapshot -noaudio -no-boot-anim
           disable-linux-hw-accel: false
           disable-animations: true
-          script: bash "$GITHUB_WORKSPACE/smoke-test-android.sh"
+          script: bash "$GITHUB_WORKSPACE/workflow-files/smoke-test-android.sh"
 
       - name: Upload diagnostic logs if smoke test fails
         if: failure()
