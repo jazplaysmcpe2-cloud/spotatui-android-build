@@ -93,6 +93,27 @@ replace_once(
     "Timed-out request state and Spotify login link",
 )
 replace_once(
+    """  const submit = () => {
+    if (!query) return;
+    setTab('All');
+    if (query !== asked) ask(query);
+  };""",
+    """  const submit = () => {
+    if (!query) return;
+    setTab('All');
+    // Keep Enter from consuming the query before Spotify has authenticated.
+    // The gated search effect will dispatch it after the session is available.
+    if (!spotifyAvailable) {
+      setAsked(null);
+      setTimedOutQuery(null);
+      return;
+    }
+    if (query !== asked) ask(query);
+  };""",
+    "Do not consume a pre-login search submission",
+)
+
+replace_once(
     "              onChangeText={setText}",
     """              onChangeText={(next) => {
                 setText(next);
@@ -176,6 +197,7 @@ checks = [
     "Retry search",
     "!spotifyAvailable || !query || query === asked",
     "Connect a Spotify Premium account",
+    "Do not consume a pre-login search submission",
 ]
 for marker in checks:
     if marker not in source:
