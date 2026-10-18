@@ -16,7 +16,7 @@ import { colors, fonts, type } from '@/theme';
 /** Listening-session timeline: current item, next queue entries and finished plays. */
 export default function SessionScreen() {
   const plays = useChannel('session') ?? [];
-  const queue = useChannel('queue') ?? null;
+  const queue = useChannel('queue');
   const { item } = usePlayback();
   const elapsed = useElapsed();
   const send = useSend();
@@ -45,7 +45,7 @@ export default function SessionScreen() {
               <View style={styles.words}>
                 <Text style={styles.nowTitle} numberOfLines={2}>{item.title}</Text>
                 <Text style={styles.meta} numberOfLines={2}>{item.artists.join(', ')}</Text>
-                <Text style={styles.meta}>{clock(Math.max(0, elapsed ?? item.position_ms ?? 0))} / {item.is_live ? 'LIVE' : clock(item.duration_ms)}</Text>
+                <Text style={styles.meta}>{clock(Math.max(0, elapsed ?? 0))} / {item.is_live ? 'LIVE' : clock(item.duration_ms)}</Text>
               </View>
             </View>
           ) : <Text style={type.small}>Nothing is playing.</Text>}
