@@ -148,7 +148,9 @@ jobs:
       - name: Patch and instrument native Android loopback connection
         run: python3 workflow-files/patches/patch_android_loopback_diagnostics.py "$GITHUB_WORKSPACE/spotatui-source"
       - name: Route Spotify pairing through the Android UI
-        run: python3 workflow-files/patches/patch_android_mobile_login.py "$GITHUB_WORKSPACE/spotatui-source"
+        run: |
+          python3 workflow-files/patches/patch_android_mobile_login.py "$GITHUB_WORKSPACE/spotatui-source"
+          echo "Phone-first pairing, session-gated Home feed/search, and APK Internet permission checks enabled."
       - name: Add Android Spotify search timeout and reconnect controls
         run: python3 workflow-files/patches/patch_android_search_feedback.py "$GITHUB_WORKSPACE/spotatui-source"
       - name: Make Android Spotify device authorization explicit

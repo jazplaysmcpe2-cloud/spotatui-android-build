@@ -63,8 +63,15 @@ jobs:
               ])
               .write();
 
-            // A single retry handles transient runner/download failures without looping.
+            // Never retry an obsolete commit: its concurrency group could cancel the newer commit's build.
             if (attempt < 2) {
+              const branchName = run.head_branch || context.ref_name;
+              const branch = await github.rest.repos.getBranch({ owner, repo, branch: branchName });
+              const currentHead = branch.data.commit.sha;
+              if (currentHead !== run.head_sha) {
+                core.info(`Skipping retry because branch ${branchName} advanced from ${run.head_sha} to ${currentHead}.`);
+                return;
+              }
               await github.rest.actions.reRunWorkflowFailedJobs({
                 owner,
                 repo,
