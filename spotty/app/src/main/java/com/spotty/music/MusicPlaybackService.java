@@ -84,7 +84,10 @@ public final class MusicPlaybackService extends Service {
                 // Activity is backgrounded or the display is off; CI uses it for soak checks.
                 if (lastPlaybackHeartbeatElapsed == 0L || now - lastPlaybackHeartbeatElapsed >= 15000L) {
                     lastPlaybackHeartbeatElapsed = now;
-                    Log.i("SpottyPlaybackService", "playback-heartbeat=playing");
+                    int positionMs = -1;
+                    try { if (mediaPlayer != null) positionMs = mediaPlayer.getCurrentPosition(); }
+                    catch (IllegalStateException ignored) {}
+                    Log.i("SpottyPlaybackService", "playback-heartbeat=playing position-ms=" + positionMs);
                 }
                 // Backoff should reset only after a stable session, not when a stream
                 // starts and immediately fails again.
