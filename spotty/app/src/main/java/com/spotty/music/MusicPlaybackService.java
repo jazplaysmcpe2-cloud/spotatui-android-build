@@ -183,14 +183,29 @@ public final class MusicPlaybackService extends Service {
                 String playingUrl = service.currentUrl;
                 service.restoreQueue(queueJson, index);
                 int playingIndex = -1;
+                JSONObject playingEntry = null;
                 for (int i = 0; i < service.playbackQueue.length(); i++) {
                     JSONObject entry = service.playbackQueue.optJSONObject(i);
-                    if (entry != null && playingUrl.equals(entry.optString("url", ""))) { playingIndex = i; break; }
+                    if (entry != null && playingUrl.equals(entry.optString("url", ""))) {
+                        playingIndex = i;
+                        playingEntry = entry;
+                        break;
+                    }
                 }
-                if (playingIndex >= 0) service.queueIndex = playingIndex;
+                if (playingIndex >= 0) {
+                    service.queueIndex = playingIndex;
+                    // Keep notification/player metadata aligned with the stream that never stopped.
+                    service.currentTitle = service.safe(playingEntry.optString("title", ""), service.currentTitle);
+                    service.currentArtist = service.safe(playingEntry.optString("artist", ""), service.currentArtist);
+                    service.currentAlbum = service.safe(playingEntry.optString("album", ""), service.currentAlbum);
+                    service.currentGenre = service.safe(playingEntry.optString("genre", ""), service.currentGenre);
+                    service.currentPlaylist = service.safe(playingEntry.optString("playlist", ""), service.currentPlaylist);
+                    service.currentSource = service.safe(playingEntry.optString("provider", ""), service.currentSource);
+                }
                 service.currentUrl = playingUrl;
                 prefs.edit().putInt("queue_index", service.queueIndex).apply();
                 service.updateNotification("Queue updated");
+                service.broadcast(service.state, service.state.equals("playing") ? "Playing" : service.state);
             });
         }
     }
