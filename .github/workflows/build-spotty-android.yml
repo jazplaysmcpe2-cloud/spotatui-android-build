@@ -18,7 +18,8 @@ permissions:
   contents: write
 
 concurrency:
-  group: spotty-android-${{ github.ref }}
+  # A retry of an older commit must never cancel a newer build on the same branch.
+  group: spotty-android-${{ github.ref }}-${{ github.sha }}
   cancel-in-progress: true
 
 jobs:
@@ -57,7 +58,7 @@ jobs:
 
       - name: Compile and package Spotty
         working-directory: spotty
-        run: gradle --no-daemon --stacktrace :app:assembleDebug
+        run: gradle --no-daemon --stacktrace :app:assembleDebug :app:assembleRelease
 
       - name: Sign with the persistent release key when configured
         env:
@@ -67,10 +68,10 @@ jobs:
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           set -euo pipefail
-          APK="spotty/app/build/outputs/apk/debug/app-debug.apk"
-          test -s "$APK"
+          DEBUG_APK="spotty/app/build/outputs/apk/debug/app-debug.apk"
+          RELEASE_APK="spotty/app/build/outputs/apk/release/app-release-unsigned.apk"
+          test -s "$DEBUG_APK"
           mkdir -p release-output
-          cp "$APK" release-output/spotty-android-release.apk
 
           values=("$ANDROID_KEYSTORE_BASE64" "$ANDROID_KEYSTORE_PASSWORD" "$ANDROID_KEY_ALIAS" "$ANDROID_KEY_PASSWORD")
           present=0
@@ -79,6 +80,8 @@ jobs:
           done
 
           if [[ "$present" -eq 4 ]]; then
+            test -s "$RELEASE_APK"
+            cp "$RELEASE_APK" release-output/spotty-android-release.apk
             KEYSTORE="$RUNNER_TEMP/spotty-android-release.jks"
             printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE"
             test -s "$KEYSTORE"
@@ -93,7 +96,12 @@ jobs:
             echo "APK signed with the configured persistent release key."
             echo "PERSISTENT_SIGNING=true" >> "$GITHUB_ENV"
           elif [[ "$present" -eq 0 ]]; then
-            echo "::warning::Signing secrets are absent; using the Android debug signing key for this installable build."
+            if [[ "$GITHUB_REF" == "refs/heads/main" && "$GITHUB_EVENT_NAME" != "pull_request" ]]; then
+              echo "::error::Refusing to publish a public APK without the persistent signing key. Configure all four ANDROID_* repository secrets first."
+              exit 1
+            fi
+            cp "$DEBUG_APK" release-output/spotty-android-release.apk
+            echo "::warning::Signing secrets absent on a pull-request build; using the debug-signed APK for CI smoke testing only."
             echo "PERSISTENT_SIGNING=false" >> "$GITHUB_ENV"
           else
             echo "::error::Only some Android signing secrets are set. Configure all four or clear all four."
@@ -105,6 +113,13 @@ jobs:
           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump permissions release-output/spotty-android-release.apk | tee release-output/apk-permissions.txt
           grep -Fq "package: name='com.spotty.music'" release-output/apk-badging.txt
           grep -Fq "android.permission.INTERNET" release-output/apk-permissions.txt
+          grep -Fq "android.permission.FOREGROUND_SERVICE" release-output/apk-permissions.txt
+          grep -Fq "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" release-output/apk-permissions.txt
+          grep -Fq "android.permission.WAKE_LOCK" release-output/apk-permissions.txt
+          if [[ "$PERSISTENT_SIGNING" == "true" ]] && grep -Fq "application-debuggable" release-output/apk-badging.txt; then
+            echo "::error::Public release artifact is debuggable; refusing publication."
+            exit 1
+          fi
           sha256sum release-output/spotty-android-release.apk | tee release-output/SHA256SUMS.txt
           echo "APK signature, package ID, and Internet permission checks passed."
 
@@ -165,7 +180,8 @@ jobs:
 
           - YouTube catalog search uses public Invidious instances; selecting a result opens the YouTube link in Morphe YouTube when installed.
           - Imports playlists from CSV, M3U, or pasted title/artist lists; Spotify link alone cannot reveal protected playlist items.
-          - Includes switchable visual themes, source-aware quality selection, licensed Internet Archive downloads, Audius and free internet radio.
+          - Includes source-aware quality selection, licensed Internet Archive downloads, Audius, free internet radio, official Deezer previews, SoundCloud handoff and local audio/FLAC folder imports.
+          - Playback runs in an Android media foreground service with notification controls, audio focus, wake-lock handling and bounded reconnect retries.
           - Package: com.spotty.music
           - Minimum Android: 8.0 (API 26)
           - Emulator smoke test: passed in this workflow.
