@@ -117,62 +117,6 @@ if ! dismiss_launcher_anr_dialog; then
   echo "Unable to dismiss emulator-only launcher dialog; refusing to accept a contaminated screenshot."
   exit 1
 fi
-echo "[smoke] Verifying redesigned discovery home is rendered"
-for home_attempt in 1 2 3; do
-  timeout 20s adb shell uiautomator dump /sdcard/spotty-home-window.xml >/dev/null 2>&1 || true
-  timeout 30s adb pull /sdcard/spotty-home-window.xml "$HOME_XML" >/dev/null 2>&1 || true
-  if grep -Fq "FRESH FINDS" "$HOME_XML" && grep -Fq "Track, artist, mood, or a lyric" "$HOME_XML"; then
-    break
-  fi
-  echo "[smoke] Home accessibility tree was obscured; recovering system dialog (attempt $home_attempt)."
-  dismiss_launcher_anr_dialog || true
-  sleep 1
-done
-grep -Fq "FRESH FINDS" "$HOME_XML"
-grep -Fq "Track, artist, mood, or a lyric" "$HOME_XML"
-if grep -Fq "YouTube • Morphe" "$HOME_XML"; then
-  echo "Legacy provider-selector UI was unexpectedly rendered."
-  exit 1
-fi
-echo "[smoke] Discovery heading, unified search field, and absence of the old provider row verified."
-grep -Fq "ALL SOURCES" "$HOME_XML"
-grep -Fq "AUDIUS" "$HOME_XML"
-grep -Fq "OPEN ARCHIVE" "$HOME_XML"
-grep -Fq "LOCAL / FLAC" "$HOME_XML"
-grep -Fq "DEEZER PREVIEWS" "$HOME_XML"
-grep -Fq "SOUNDCLOUD" "$HOME_XML"
-grep -Fq "SPOTIFY / SPOTUI" "$HOME_XML"
-grep -Fq "SOULSEEK" "$HOME_XML"
-echo "[smoke] Unified-source and explicit provider/handoff rail labels verified."
-
-# Submit a real query and verify the result heading changes; then exercise a specific source filter.
-tap_ui_contains "Track, artist, mood, or a lyric"
-timeout 15s adb shell input text "Radiohead"
-timeout 15s adb shell input keyevent 66
-sleep 2
-timeout 20s adb shell uiautomator dump /sdcard/spotty-unified-search.xml >/dev/null 2>&1
-timeout 20s adb pull /sdcard/spotty-unified-search.xml "$GITHUB_WORKSPACE/release-output/spotty-unified-search.xml" >/dev/null
-grep -Fq "SEARCH RESULTS" "$GITHUB_WORKSPACE/release-output/spotty-unified-search.xml"
-tap_ui_contains "AUDIUS"
-sleep 1
-timeout 20s adb shell uiautomator dump /sdcard/spotty-source-filter.xml >/dev/null 2>&1
-timeout 20s adb pull /sdcard/spotty-source-filter.xml "$GITHUB_WORKSPACE/release-output/spotty-source-filter.xml" >/dev/null
-grep -Fq "AUDIUS SEARCH" "$GITHUB_WORKSPACE/release-output/spotty-source-filter.xml"
-scroll_source_rail right
-tap_ui_contains "SPOTIFY / SPOTUI"
-sleep 1
-timeout 20s adb shell uiautomator dump /sdcard/spotty-spotui-handoff.xml >/dev/null 2>&1
-timeout 20s adb pull /sdcard/spotty-spotui-handoff.xml "$GITHUB_WORKSPACE/release-output/spotty-spotui-handoff.xml" >/dev/null
-grep -Fq "SPOTIFY • SPOTUI HANDOFF" "$GITHUB_WORKSPACE/release-output/spotty-spotui-handoff.xml"
-grep -Fq "Open Spotui player" "$GITHUB_WORKSPACE/release-output/spotty-spotui-handoff.xml"
-scroll_source_rail left
-tap_ui_contains "ALL SOURCES"
-sleep 1
-echo "[smoke] Search submit, source filtering, and the explicit Spotui handoff view work."
-
-
-# Theme switching used to recreate the Activity while a parent dialog was still attached.
-# Exercise several visually distinct themes through the actual Settings UI, then restore default.
 tap_ui_contains() {
   local target="$1" xml_path="$GITHUB_WORKSPACE/release-output/ui-tap-window.xml"
   local attempt=1 point="missing"
@@ -207,6 +151,15 @@ PY
   cat "$xml_path" 2>/dev/null || true
   return 1
 }
+
+rail_snapshot_contains() {
+  local target="$1"
+  local xml_path="$GITHUB_WORKSPACE/release-output/source-rail.xml"
+  timeout 20s adb shell uiautomator dump /sdcard/spotty-source-rail.xml >/dev/null 2>&1 || return 1
+  timeout 20s adb pull /sdcard/spotty-source-rail.xml "$xml_path" >/dev/null 2>&1 || return 1
+  grep -Fq -- "$target" "$xml_path"
+}
+
 scroll_source_rail() {
   local direction="$1" xml_path="$GITHUB_WORKSPACE/release-output/source-rail.xml"
   timeout 20s adb shell uiautomator dump /sdcard/spotty-source-rail.xml >/dev/null 2>&1 || true
@@ -218,7 +171,7 @@ try: nodes = list(ET.parse(sys.argv[1]).getroot().iter("node"))
 except Exception: nodes = []
 for node in nodes:
     value = node.attrib.get("text", "").upper()
-    if any(label in value for label in ("ALL SOURCES", "AUDIUS", "OPEN ARCHIVE", "DEEZER PREVIEWS", "SOUNDCLOUD", "SPOTIFY / SPOTUI")):
+    if any(label in value for label in ("ALL SOURCES", "AUDIUS", "OPEN ARCHIVE", "DEEZER PREVIEWS", "SOUNDCLOUD", "SPOTIFY / SPOTUI", "SOULSEEK", "LOCAL / FLAC", "RADIO")):
         bounds = [int(n) for n in re.findall(r"\d+", node.attrib.get("bounds", ""))]
         if len(bounds) == 4:
             print((bounds[1] + bounds[3]) // 2)
@@ -229,17 +182,88 @@ PY
   screen_width="$(timeout 10s adb shell wm size | sed -n 's/.*size: \([0-9]*\)x.*/\1/p' | tail -n 1)"
   [[ "$screen_width" =~ ^[0-9]+$ ]] || screen_width=1080
   if [[ "$direction" == "right" ]]; then
-    start_x=$((screen_width * 86 / 100)); end_x=$((screen_width * 14 / 100))
+    start_x=$((screen_width * 82 / 100)); end_x=$((screen_width * 18 / 100))
   else
-    start_x=$((screen_width * 14 / 100)); end_x=$((screen_width * 86 / 100))
+    start_x=$((screen_width * 18 / 100)); end_x=$((screen_width * 82 / 100))
   fi
-  timeout 15s adb shell input swipe "$start_x" "$y" "$end_x" "$y" 350
-  sleep 1
-  timeout 15s adb shell input swipe "$start_x" "$y" "$end_x" "$y" 350
-  sleep 1
-  timeout 15s adb shell input swipe "$start_x" "$y" "$end_x" "$y" 350
-  sleep 1
+  timeout 15s adb shell input swipe "$start_x" "$y" "$end_x" "$y" 300
+  sleep 0.5
 }
+
+ensure_rail_label_visible() {
+  local target="$1" direction attempt
+  if rail_snapshot_contains "$target"; then return 0; fi
+  # The provider rail is deliberately horizontally scrollable. Search each viewport
+  # instead of incorrectly requiring off-screen labels in the initial XML snapshot.
+  for direction in right left; do
+    for attempt in 1 2 3 4 5 6 7 8; do
+      scroll_source_rail "$direction"
+      if rail_snapshot_contains "$target"; then
+        echo "[smoke] Provider label visible after scrolling: $target"
+        return 0
+      fi
+    done
+  done
+  echo "Could not expose source-rail label after scrolling: $target"
+  cat "$GITHUB_WORKSPACE/release-output/source-rail.xml" 2>/dev/null || true
+  return 1
+}
+
+echo "[smoke] Verifying redesigned discovery home is rendered"
+for home_attempt in 1 2 3; do
+  timeout 20s adb shell uiautomator dump /sdcard/spotty-home-window.xml >/dev/null 2>&1 || true
+  timeout 30s adb pull /sdcard/spotty-home-window.xml "$HOME_XML" >/dev/null 2>&1 || true
+  if grep -Fq "FRESH FINDS" "$HOME_XML" && grep -Fq "Track, artist, mood, or a lyric" "$HOME_XML"; then
+    break
+  fi
+  echo "[smoke] Home accessibility tree was obscured; recovering system dialog (attempt $home_attempt)."
+  dismiss_launcher_anr_dialog || true
+  sleep 1
+done
+grep -Fq "FRESH FINDS" "$HOME_XML"
+grep -Fq "Track, artist, mood, or a lyric" "$HOME_XML"
+if grep -Fq "YouTube • Morphe" "$HOME_XML"; then
+  echo "Legacy provider-selector UI was unexpectedly rendered."
+  exit 1
+fi
+echo "[smoke] Discovery heading, unified search field, and absence of the old provider row verified."
+# Only the first chip is required in the initial viewport. Verify the remaining labels
+# after scrolling the real rail rather than assuming off-screen views are accessible.
+grep -Fq "ALL SOURCES" "$HOME_XML"
+echo "[smoke] Initial source-rail viewport verified."
+for rail_label in "AUDIUS" "OPEN ARCHIVE" "DEEZER PREVIEWS" "YOUTUBE" "SOUNDCLOUD" "SPOTIFY / SPOTUI" "SOULSEEK" "LOCAL / FLAC" "RADIO"; do
+  ensure_rail_label_visible "$rail_label"
+done
+ensure_rail_label_visible "ALL SOURCES"
+
+# Submit a real query and verify the result heading changes; then exercise a specific source filter.
+tap_ui_contains "Track, artist, mood, or a lyric"
+timeout 15s adb shell input text "Radiohead"
+timeout 15s adb shell input keyevent 66
+sleep 2
+timeout 20s adb shell uiautomator dump /sdcard/spotty-unified-search.xml >/dev/null 2>&1
+timeout 20s adb pull /sdcard/spotty-unified-search.xml "$GITHUB_WORKSPACE/release-output/spotty-unified-search.xml" >/dev/null
+grep -Fq "SEARCH RESULTS" "$GITHUB_WORKSPACE/release-output/spotty-unified-search.xml"
+tap_ui_contains "AUDIUS"
+sleep 1
+timeout 20s adb shell uiautomator dump /sdcard/spotty-source-filter.xml >/dev/null 2>&1
+timeout 20s adb pull /sdcard/spotty-source-filter.xml "$GITHUB_WORKSPACE/release-output/spotty-source-filter.xml" >/dev/null
+grep -Fq "AUDIUS SEARCH" "$GITHUB_WORKSPACE/release-output/spotty-source-filter.xml"
+ensure_rail_label_visible "SPOTIFY / SPOTUI"
+tap_ui_contains "SPOTIFY / SPOTUI"
+sleep 1
+timeout 20s adb shell uiautomator dump /sdcard/spotty-spotui-handoff.xml >/dev/null 2>&1
+timeout 20s adb pull /sdcard/spotty-spotui-handoff.xml "$GITHUB_WORKSPACE/release-output/spotty-spotui-handoff.xml" >/dev/null
+grep -Fq "SPOTIFY • SPOTUI HANDOFF" "$GITHUB_WORKSPACE/release-output/spotty-spotui-handoff.xml"
+grep -Fq "Open Spotui player" "$GITHUB_WORKSPACE/release-output/spotty-spotui-handoff.xml"
+ensure_rail_label_visible "ALL SOURCES"
+tap_ui_contains "ALL SOURCES"
+sleep 1
+echo "[smoke] Search submit, source filtering, and the explicit Spotui handoff view work."
+
+
+# Theme switching used to recreate the Activity while a parent dialog was still attached.
+# Exercise several visually distinct themes through the actual Settings UI, then restore default.
 
 for theme in "Y2K Glass" "Midwest Emo" "Retro CRT" "Synthwave" "Frutiger Aero"; do
   echo "[smoke] Switching theme through Settings: $theme"
