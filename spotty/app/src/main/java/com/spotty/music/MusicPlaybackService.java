@@ -17,6 +17,8 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.PowerManager;
+import org.json.JSONArray;
+import org.json.JSONObject;
 
 
 /**
@@ -42,6 +44,8 @@ public final class MusicPlaybackService extends Service {
     private boolean preparing;
     private boolean resumeOnFocusGain;
     private int retryCount;
+    private JSONArray playbackQueue = new JSONArray();
+    private int queueIndex;
     private AudioManager audioManager;
     private AudioFocusRequest audioFocusRequest;
     private PowerManager.WakeLock wakeLock;
@@ -77,11 +81,17 @@ public final class MusicPlaybackService extends Service {
     };
 
     public static void play(Context context, String url, String title, String artist) {
+        play(context, url, title, artist, "", 0);
+    }
+
+    public static void play(Context context, String url, String title, String artist, String queueJson, int index) {
         Intent intent = new Intent(context, MusicPlaybackService.class)
                 .setAction(ACTION_PLAY)
                 .putExtra("url", url)
                 .putExtra("title", title)
-                .putExtra("artist", artist);
+                .putExtra("artist", artist)
+                .putExtra("queue_json", queueJson)
+                .putExtra("queue_index", index);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) context.startForegroundService(intent);
         else context.startService(intent);
     }
@@ -166,10 +176,13 @@ public final class MusicPlaybackService extends Service {
             currentTitle = safe(intent.getStringExtra("title"), "Untitled track");
             currentArtist = safe(intent.getStringExtra("artist"), "");
             retryCount = 0;
+            restoreQueue(intent.getStringExtra("queue_json"), intent.getIntExtra("queue_index", 0));
             getPreferences().edit()
                     .putString("last_url", currentUrl)
                     .putString("last_title", currentTitle)
                     .putString("last_artist", currentArtist)
+                    .putString("queue_json", playbackQueue.toString())
+                    .putInt("queue_index", queueIndex)
                     .putBoolean("playback_active", true)
                     .apply();
         } else if (intent == null) {
@@ -180,6 +193,8 @@ public final class MusicPlaybackService extends Service {
             currentUrl = getPreferences().getString("last_url", "");
             currentTitle = getPreferences().getString("last_title", "Spotty");
             currentArtist = getPreferences().getString("last_artist", "");
+            restoreQueue(getPreferences().getString("queue_json", "[]"),
+                    getPreferences().getInt("queue_index", 0));
             if (currentUrl.isEmpty()) {
                 stopSelf();
                 return START_NOT_STICKY;
@@ -212,6 +227,24 @@ public final class MusicPlaybackService extends Service {
                 AudioManager.AUDIOFOCUS_GAIN) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED;
     }
 
+
+    private void restoreQueue(String raw, int index) {
+        playbackQueue = new JSONArray();
+        if (raw != null && !raw.trim().isEmpty()) {
+            try { playbackQueue = new JSONArray(raw); } catch (Exception ignored) {}
+        }
+        if (playbackQueue.length() == 0 && !currentUrl.isEmpty()) {
+            JSONObject only = new JSONObject();
+            try {
+                only.put("url", currentUrl);
+                only.put("title", currentTitle);
+                only.put("artist", currentArtist);
+                playbackQueue.put(only);
+            } catch (Exception ignored) {}
+        }
+        queueIndex = playbackQueue.length() == 0 ? 0 : Math.max(0, Math.min(index, playbackQueue.length() - 1));
+    }
+
     private void prepareCurrentStream() {
         releaseCurrentPlayer();
         preparing = true;
@@ -238,9 +271,30 @@ public final class MusicPlaybackService extends Service {
         next.setOnCompletionListener(mp -> {
             if (mediaPlayer != mp) return;
             preparing = false;
-            setState("completed", "Track finished");
             releaseCurrentPlayer();
             releaseWakeLock();
+            if (playbackQueue.length() > 1) {
+                queueIndex = (queueIndex + 1) % playbackQueue.length();
+                JSONObject queued = playbackQueue.optJSONObject(queueIndex);
+                if (queued != null && !queued.optString("url", "").isEmpty()) {
+                    currentUrl = queued.optString("url", "");
+                    currentTitle = safe(queued.optString("title", ""), "Untitled track");
+                    currentArtist = safe(queued.optString("artist", ""), "");
+                    retryCount = 0;
+                    getPreferences().edit()
+                            .putString("last_url", currentUrl)
+                            .putString("last_title", currentTitle)
+                            .putString("last_artist", currentArtist)
+                            .putString("queue_json", playbackQueue.toString())
+                            .putInt("queue_index", queueIndex)
+                            .putBoolean("playback_active", true)
+                            .apply();
+                    setState("connecting", "Next track");
+                    prepareCurrentStream();
+                    return;
+                }
+            }
+            setState("completed", "Track finished");
             getPreferences().edit().putBoolean("playback_active", false).apply();
             stopForeground(STOP_FOREGROUND_REMOVE);
             stopSelf();
