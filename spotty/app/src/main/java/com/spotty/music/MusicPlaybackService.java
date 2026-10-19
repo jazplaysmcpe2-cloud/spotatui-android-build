@@ -42,13 +42,7 @@ public final class MusicPlaybackService extends Service {
     private static volatile MusicPlaybackService instance;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
-    private final Runnable retryRunnable = () -> {
-        retryScheduled = false;
-        if (instance == this && !currentUrl.isEmpty()
-                && getPreferences().getBoolean("playback_active", false)) {
-            prepareCurrentStream();
-        }
-    };
+    private final Runnable retryRunnable = this::runScheduledRetry;
     private MediaPlayer mediaPlayer;
     private String currentUrl = "";
     private String currentTitle = "Spotty";
@@ -370,6 +364,14 @@ public final class MusicPlaybackService extends Service {
             currentSource = safe(selected.optString("provider", currentSource), inferSource(currentUrl));
         } else if (currentSource.isEmpty()) {
             currentSource = inferSource(currentUrl);
+        }
+    }
+
+    private void runScheduledRetry() {
+        retryScheduled = false;
+        if (instance == this && currentUrl != null && !currentUrl.isEmpty()
+                && getPreferences().getBoolean("playback_active", false)) {
+            prepareCurrentStream();
         }
     }
 
