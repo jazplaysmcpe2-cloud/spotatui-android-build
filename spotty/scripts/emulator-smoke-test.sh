@@ -95,7 +95,7 @@ sleep 10
 echo "[smoke] Checking release APK process, crash logs, and ANRs"
 PID="$(timeout 20s adb shell pidof com.spotty.music | tr -d '\r' || true)"
 timeout 30s adb logcat -d -b main -b system -b events > "$LOGCAT"
-grep -E "FATAL EXCEPTION|ANR in com\\.spotty\\.music|am_anr.*com\\.spotty\\.music|Input dispatching timed out.*com\\.spotty\\.music|Process: com\\.spotty\\.music" "$LOGCAT" > "$ERROR_LOG" || true
+grep -E "FATAL EXCEPTION|ANR in com\\.spotty\\.music|am_anr.*com\\.spotty\\.music|am_crash:.*com\\.spotty\\.music|am_proc_died:.*com\\.spotty\\.music|Input dispatching timed out.*com\\.spotty\\.music|Process: com\\.spotty\\.music" "$LOGCAT" > "$ERROR_LOG" || true
 grep -Ei "ANR in com\\.google\\.android\\.apps\\.nexuslauncher|am_anr.*com\\.google\\.android\\.apps\\.nexuslauncher" "$LOGCAT" > "$SYSTEM_WARNING_LOG" || true
 if [ -s "$SYSTEM_WARNING_LOG" ]; then
   echo "[smoke] Warning: Pixel Launcher ANR logged by emulator; checking and dismissing any visible system dialog."
@@ -107,7 +107,7 @@ if [ -z "$PID" ]; then
   exit 1
 fi
 
-if grep -Eiq "FATAL EXCEPTION|ANR in com\\.spotty\\.music|Input dispatching timed out.*com\\.spotty\\.music|Process: com\\.spotty\\.music" "$LOGCAT"; then
+if grep -Eiq "FATAL EXCEPTION|ANR in com\\.spotty\\.music|am_crash:.*com\\.spotty\\.music|am_proc_died:.*com\\.spotty\\.music|Input dispatching timed out.*com\\.spotty\\.music|Process: com\\.spotty\\.music" "$LOGCAT"; then
   echo "Spotty release APK crashed or became unresponsive in the emulator."
   cat "$ERROR_LOG"
   exit 1
