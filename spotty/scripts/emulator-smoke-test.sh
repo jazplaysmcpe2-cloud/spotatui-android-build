@@ -18,6 +18,7 @@ test -s "$SMOKE_APK"
 SYSTEM_WARNING_LOG="$GITHUB_WORKSPACE/release-output/emulator-system-warnings.txt"
 WINDOW_XML="$GITHUB_WORKSPACE/release-output/emulator-window.xml"
 HOME_XML="$GITHUB_WORKSPACE/release-output/spotty-home-window.xml"
+PLAYER_XML="$GITHUB_WORKSPACE/release-output/spotty-player-window.xml"
 
 # A no-window Android emulator can occasionally show "Pixel Launcher isn't responding"
 # over a healthy app. Dismiss that system dialog by locating its Wait button through UIAutomator.
@@ -173,6 +174,15 @@ if ! dismiss_launcher_anr_dialog; then
   echo "Could not clear emulator launcher dialog before background-playback assertions."
   exit 1
 fi
+echo "[smoke] Verifying the real in-app player sheet while the WAV is playing"
+timeout 20s adb shell uiautomator dump /sdcard/spotty-player-window.xml >/dev/null
+timeout 30s adb pull /sdcard/spotty-player-window.xml "$PLAYER_XML" >/dev/null
+grep -Fq "NOW PLAYING" "$PLAYER_XML"
+grep -Fq "Spotty playback test" "$PLAYER_XML"
+grep -Fq "SOURCE" "$PLAYER_XML"
+grep -Fq "ON THIS DEVICE" "$PLAYER_XML"
+grep -Fq 'class="android.widget.SeekBar"' "$PLAYER_XML"
+echo "[smoke] Player title, source footer, and seek control are visible."
 timeout 20s adb logcat -d -s SpottyPlaybackService:I > "$SERVICE_LOG"
 if ! grep -Fq "playback-state=playing" "$SERVICE_LOG"; then
   echo "The foreground playback service never reported that the real WAV stream started."
