@@ -9,14 +9,14 @@ Spotty is an independent Android music-discovery and listening app (package `com
 - **Deezer:** searches the public API and plays the official preview URL when a preview is provided (typically around 30 seconds). The full-track action opens Deezer explicitly.
 - **Local audio:** plays files chosen with Android's document picker, including supported FLAC files. A Soulseek download is played locally after the user imports/selects it.
 - **Internet radio:** playable stations can be searched from the radio collection.
-- **YouTube catalogue:** results are metadata/listing links, not an in-app full-track stream. Tapping a result opens a Spotty player sheet first; only the explicit "Open in YouTube" action hands the link to Morphe/YouTube or a browser. Spotty does not extract, download, or redistribute YouTube media streams.
-- **SoundCloud, Spotify and YouTube Music:** these services do not magically become connected because their apps/websites can be opened. This build does not have an official, authenticated SoundCloud stream/search integration, Spotify catalogue/playback API session, or private YouTube Music history integration. The app does not show a false Connected state.
+- **YouTube catalogue:** results are metadata/listing links, not an in-app full-track stream. Tapping a result opens a Spotty player sheet first; only the explicit "Open in YouTube" action hands the link to Morphe/YouTube or a browser. Spotty does not extract, download, or redistribute YouTube media streams. The all-sources results show a compact source label, and the source rail provides explicit catalogue filters.
+- **SoundCloud, Spotify and YouTube Music:** these services do not magically become connected because their apps/websites can be opened. This build does not have an official, authenticated SoundCloud stream/search integration, Spotify catalogue/playback API session, or private YouTube Music history integration. The app does not show a false Connected state. Where installed, the account screen can launch Spotui (`com.music.spotui`) as a separate app for Spotify-supported features; it is not embedded playback inside Spotty.
 
 ## Search and player behaviour
 
 The default search merges available Audius, open-licence Internet Archive, Deezer-preview and public YouTube results. Each network request is independent: one catalogue failing should not prevent other providers from returning results. Results are ordered to prioritise sources that can play in Spotty. When all catalogues fail, the page reports a failure rather than pretending that tracks loaded.
 
-Track cards show artwork where the catalogue provides it, title, artist and a small source line. Selecting a directly playable source starts the native audio service and opens the full player. Selecting a source that cannot provide a playable in-app stream opens the player sheet without redirecting; the external hand-off is a separate, explicit choice. The player includes artwork, queue, previous/next, pause/resume, seek position when the source supports it, elapsed/duration indicators, and source metadata at the bottom.
+Track cards show artwork where the catalogue provides it, title, artist and a small source line. Selecting a directly playable source starts the native audio service and opens the full player. Selecting a source that cannot provide a playable in-app stream opens the player sheet without redirecting; the external hand-off is a separate, explicit choice. The player includes artwork, queue, previous/next, pause/resume, seek position when the source supports it, elapsed/duration indicators, and source metadata at the bottom. The mini-player opens a dedicated empty-player surface when no track has been selected, and its play control starts the first visible playable result instead of silently doing nothing.
 
 ## Background playback and permissions
 
@@ -26,7 +26,7 @@ No Android app can guarantee uninterrupted 24/7 playback: the OS may force-stop 
 
 ## Themes and visual design
 
-The theme selector now uses short art-direction descriptions and preview surfaces rather than a bare list of colour names. The themes include Frutiger Aero, Midwest Emo, Synthwave, Vaporwave, Cyberpunk, Aurora Forest, AMOLED, Y2K Glass, Candy Pop, Retro CRT, Sunset Coast and Dark Academia. The redesigned home, cards, player and settings all use the selected palette and theme-specific surfaces. Theme changes are visual preferences only; they do not change audio quality or provider access.
+The theme selector uses dedicated preview palettes and named art directions. Themes include Frutiger Aero (bright aqua, glossy bubbles, sky-like gradients), Midwest Emo (muted plum/ink), Synthwave (neon grid), Vaporwave (soft digital gradient), Cyberpunk (sharp neon accents), Aurora Forest (green atmospheric glow), AMOLED (true black), Y2K Glass (iridescent blue glass), Candy Pop (bubblegum geometry), Retro CRT (phosphor green/scanlines), Sunset Coast (peach glow), and Dark Academia (warm ink-and-paper tones). Settings/theme dialogs are dismissed before Activity recreation to avoid stale-window failures.
 
 ## Provider credentials and limits
 
