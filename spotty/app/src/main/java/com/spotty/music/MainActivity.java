@@ -2679,15 +2679,10 @@ public final class MainActivity extends Activity {
                 name.setMaxLines(2);
                 TextView artist = text(track.artist, 12, MUTED, false);
                 artist.setMaxLines(1);
-                TextView provider = text(displayProvider(track), 9, MUTED, true);
-                provider.setLetterSpacing(0.03f);
                 LinearLayout.LayoutParams artistLp = new LinearLayout.LayoutParams(-1, -2);
                 artistLp.topMargin = dp(4);
-                LinearLayout.LayoutParams providerLp = new LinearLayout.LayoutParams(-1, -2);
-                providerLp.topMargin = dp(5);
                 info.addView(name);
                 info.addView(artist, artistLp);
-                info.addView(provider, providerLp);
                 card.addView(info, new LinearLayout.LayoutParams(0, -2, 1));
 
                 TextView like = text(isFavorite(track) ? "♥" : "♡", 22,
