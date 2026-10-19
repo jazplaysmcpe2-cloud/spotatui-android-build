@@ -68,12 +68,19 @@ public final class MusicPlaybackService extends Service {
     private boolean trackPlayCounted;
     private long lastStatsTickElapsed;
     private long lastStatsPersistElapsed;
+    private long lastPlaybackHeartbeatElapsed;
     private long pendingStatsMs;
 
     private final Runnable statsTicker = new Runnable() {
         @Override public void run() {
             long now = SystemClock.elapsedRealtime();
             if (isPlayerActuallyPlaying()) {
+                // A heartbeat proves that MediaPlayer remains actively playing while the
+                // Activity is backgrounded or the display is off; CI uses it for soak checks.
+                if (lastPlaybackHeartbeatElapsed == 0L || now - lastPlaybackHeartbeatElapsed >= 15000L) {
+                    lastPlaybackHeartbeatElapsed = now;
+                    Log.i("SpottyPlaybackService", "playback-heartbeat=playing");
+                }
                 if (lastStatsTickElapsed > 0L && now >= lastStatsTickElapsed) {
                     pendingStatsMs += now - lastStatsTickElapsed;
                 }
@@ -83,6 +90,7 @@ public final class MusicPlaybackService extends Service {
                 }
             } else {
                 lastStatsTickElapsed = 0L;
+                lastPlaybackHeartbeatElapsed = 0L;
                 if (pendingStatsMs > 0L) flushPendingStatsTime();
             }
             handler.postDelayed(this, 1000L);
