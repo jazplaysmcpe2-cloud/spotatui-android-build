@@ -147,6 +147,7 @@ public final class MainActivity extends Activity {
         sourceRow = new LinearLayout(this);
         sourceRow.setOrientation(LinearLayout.HORIZONTAL);
         sourceRow.addView(sourceButton("YouTube • Morphe", "youtube"));
+        sourceRow.addView(sourceButton("Morphe Music", "ytmusic"));
         sourceRow.addView(sourceButton("Audius", "audius"));
         sourceRow.addView(sourceButton("Open Archive", "archive"));
         sourceRow.addView(sourceButton("Radio", "radio"));
@@ -814,6 +815,7 @@ public final class MainActivity extends Activity {
                     ? "No imported tracks yet. Import a CSV, M3U, or pasted Spotify track list."
                     : playlistTracks.size() + " imported tracks • tap a track to find it on YouTube/Morphe");
         } else if ("youtube".equals(source)) loadYoutube(query);
+        else if ("ytmusic".equals(source)) openYoutubeMusicSearch(query);
         else if ("archive".equals(source)) loadArchive(query);
         else if ("radio".equals(source)) loadRadio(query);
         else loadAudius(query);
@@ -979,6 +981,35 @@ public final class MainActivity extends Activity {
         } catch (Exception e) {
             statusText.setText("Could not open the YouTube search.");
         }
+    }
+
+    private void openYoutubeMusicSearch(String query) {
+        io.execute(() -> {
+            try {
+                String q = query == null || query.trim().isEmpty() ? "popular music" : query.trim();
+                String url = "https://music.youtube.com/search?q=" + enc(q);
+                main.post(() -> {
+                    releasePlayer();
+                    if (playPauseButton != null) playPauseButton.setText("▶");
+                    nowPlayingText.setText("Morphe Music • " + q);
+                    try {
+                        Intent musicIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+                        musicIntent.setPackage("app.morphe.android.apps.youtube.music");
+                        startActivity(musicIntent);
+                        statusText.setText("Opened Morphe Music • playback handled by YouTube Music");
+                    } catch (Exception musicUnavailable) {
+                        try {
+                            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
+                            statusText.setText("Morphe Music not detected; opened the default music/web handler");
+                        } catch (Exception noHandler) {
+                            statusText.setText("No app can open YouTube Music links. Install Morphe Music or a browser.");
+                        }
+                    }
+                });
+            } catch (Exception e) {
+                main.post(() -> statusText.setText("Could not prepare YouTube Music search."));
+            }
+        });
     }
 
     private void openYoutubeUrl(String url, String title) {
