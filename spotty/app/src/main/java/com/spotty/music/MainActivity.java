@@ -1181,6 +1181,10 @@ public final class MainActivity extends Activity {
     }
 
     private void loadAllSources(String query) {
+        loadAllSources(query, false);
+    }
+
+    private void loadAllSources(String query, boolean retryAttempt) {
         final String q = query == null ? "" : query.trim();
         source = "all";
         final int version = ++allSearchVersion;
@@ -1237,6 +1241,19 @@ public final class MainActivity extends Activity {
             final int sourcesOk = responsive;
             main.post(() -> {
                 if (version != allSearchVersion || !"all".equals(source)) return;
+                if (sourcesOk == 0 && !retryAttempt) {
+                    String retrying = "No catalogue responded • retrying once…";
+                    showTracks(finalTracks, retrying);
+                    statusText.setText(retrying);
+                    // Mobile/emulator networks can finish connecting just after launch. Retry once
+                    // rather than leaving a fresh install stuck on an empty catalogue screen.
+                    main.postDelayed(() -> {
+                        if (version == allSearchVersion && "all".equals(source)) {
+                            loadAllSources(q, true);
+                        }
+                    }, 1500L);
+                    return;
+                }
                 String status = finalTracks.size() + " finds • " + sourcesOk + "/4 catalogues online";
                 if (sourcesOk == 0) status = "Catalogues unavailable • check connection and retry";
                 showTracks(finalTracks, status);
