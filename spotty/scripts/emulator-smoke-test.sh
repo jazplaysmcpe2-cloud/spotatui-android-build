@@ -393,12 +393,12 @@ if [[ "$HEARTBEATS" -lt 2 ]]; then
   cat "$SERVICE_LOG"
   exit 1
 fi
-POSITIONS="$(grep "playback-heartbeat=playing position-ms=" "$SERVICE_LOG" | sed -n 's/.*position-ms=\\([0-9][0-9]*\\).*/\\1/p')"
-FIRST_POSITION="$(printf '%s\\n' "$POSITIONS" | head -n 1)"
-LAST_POSITION="$(printf '%s\\n' "$POSITIONS" | tail -n 1)"
+POSITIONS="$(awk -F'position-ms=' '/playback-heartbeat=playing position-ms=/ { value=$2; sub(/[^0-9].*/, "", value); if (value ~ /^[0-9]+$/) print value }' "$SERVICE_LOG")"
+FIRST_POSITION="$(printf '%s\n' "$POSITIONS" | head -n 1)"
+LAST_POSITION="$(printf '%s\n' "$POSITIONS" | tail -n 1)"
 if [[ ! "$FIRST_POSITION" =~ ^[0-9]+$ || ! "$LAST_POSITION" =~ ^[0-9]+$ ]] || (( LAST_POSITION - FIRST_POSITION < 15000 )); then
   echo "Audio position did not advance by at least 15 seconds during the background screen-off soak."
-  printf 'Recorded audio positions:\\n%s\\n' "$POSITIONS"
+  printf 'Recorded audio positions:\n%s\n' "$POSITIONS"
   cat "$SERVICE_LOG"
   exit 1
 fi
