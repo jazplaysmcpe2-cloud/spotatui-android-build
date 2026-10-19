@@ -33,5 +33,8 @@
         <package android:name="com.music.spotui" />
         <package android:name="app.morphe.android.youtube" />
         <package android:name="app.morphe.android.apps.youtube.music" />
+        <package android:name="com.google.android.youtube" />
+        <package android:name="com.google.android.apps.youtube.music" />
+        <package android:name="com.spotify.music" />
     </queries>
 </manifest>
