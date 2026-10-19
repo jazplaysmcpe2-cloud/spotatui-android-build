@@ -36,5 +36,6 @@
         <package android:name="com.google.android.youtube" />
         <package android:name="com.google.android.apps.youtube.music" />
         <package android:name="com.spotify.music" />
+        <package android:name="com.soundcloud.android" />
     </queries>
 </manifest>
