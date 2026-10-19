@@ -179,8 +179,25 @@ public final class MusicPlaybackService extends Service {
     public static int currentPosition() {
         MusicPlaybackService service = instance;
         if (service == null || service.mediaPlayer == null || service.preparing) return 0;
-        try { return service.mediaPlayer.getCurrentPosition(); }
+        try { return Math.max(0, service.mediaPlayer.getCurrentPosition()); }
         catch (IllegalStateException ignored) { return 0; }
+    }
+
+    public static int currentDuration() {
+        MusicPlaybackService service = instance;
+        if (service == null || service.mediaPlayer == null || service.preparing) return 0;
+        try { return Math.max(0, service.mediaPlayer.getDuration()); }
+        catch (IllegalStateException ignored) { return 0; }
+    }
+
+    public static void seekToPosition(int requestedPositionMs) {
+        MusicPlaybackService service = instance;
+        if (service == null || service.mediaPlayer == null || service.preparing) return;
+        try {
+            int duration = Math.max(0, service.mediaPlayer.getDuration());
+            int target = Math.max(0, Math.min(requestedPositionMs, duration));
+            service.mediaPlayer.seekTo(target);
+        } catch (IllegalStateException ignored) {}
     }
 
     public static void seekToStart() {
