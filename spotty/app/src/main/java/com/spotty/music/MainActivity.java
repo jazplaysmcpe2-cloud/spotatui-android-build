@@ -56,6 +56,7 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.provider.OpenableColumns;
 import android.provider.DocumentsContract;
+import android.provider.Settings;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -737,6 +738,7 @@ public final class MainActivity extends Activity {
         addSettingsRow(rows, "♫", "Playback quality", activeQuality + " · uses what each source actually provides", this::showQualityDialog);
         addSettingsRow(rows, "◷", "Listening stats", "Time listened, track starts and top artists on this device", this::showMusicStatsDialog);
         addSettingsRow(rows, "⇄", "Account connections", "Provider sign-in status and requirements", this::showConnectionsDialog);
+        addSettingsRow(rows, "◉", "Background reliability", "Battery and background-running settings for long listening sessions", this::showBackgroundReliabilityDialog);
         addSettingsRow(rows, "▤", "Playlist import", "CSV, M3U or pasted track lists", this::showPlaylistImportDialog);
         addSettingsRow(rows, "↻", "App updates", "Check the latest Spotty Android release", () -> checkForUpdatesIfDue(true));
         addSettingsRow(rows, "ⓘ", "About Spotty", "What plays here, what opens elsewhere, and why", () ->
@@ -759,6 +761,40 @@ public final class MainActivity extends Activity {
             window.setStatusBarColor(BG);
             window.setNavigationBarColor(BG);
             window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
+        }
+    }
+
+    private void showBackgroundReliabilityDialog() {
+        String guidance = "Spotty keeps playback in a foreground media service and retries remote streams, but Android and phone manufacturers still control battery and background limits. For longer listening sessions:\\n\\n"
+                + "• Open App info → Battery and choose Unrestricted / No restrictions if your phone offers it.\\n"
+                + "• On Xiaomi / POCO HyperOS, enable Autostart and allow background activity where those options are available.\\n"
+                + "• Allow Spotty notifications and background data.\\n"
+                + "• Do not force-stop Spotty; force-stop deliberately terminates playback.\\n\\n"
+                + "These settings improve resilience but cannot prevent interruptions from shutdown/reboot, lost connectivity, inaccessible tracks, provider outages, or system-enforced restrictions.";
+        new AlertDialog.Builder(this)
+                .setTitle("Background playback reliability")
+                .setMessage(guidance)
+                .setPositiveButton("Open App info", (dialog, which) -> openSpottyAppSettings())
+                .setNeutralButton("Battery optimization", (dialog, which) -> openBatteryOptimizationSettings())
+                .setNegativeButton("Done", null)
+                .show();
+    }
+
+    private void openSpottyAppSettings() {
+        try {
+            Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    Uri.fromParts("package", getPackageName(), null));
+            startActivity(intent);
+        } catch (Exception e) {
+            Toast.makeText(this, "Could not open Spotty's App info settings.", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void openBatteryOptimizationSettings() {
+        try {
+            startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS));
+        } catch (Exception e) {
+            openSpottyAppSettings();
         }
     }
 
