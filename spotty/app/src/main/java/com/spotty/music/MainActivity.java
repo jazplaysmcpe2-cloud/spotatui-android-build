@@ -488,22 +488,31 @@ public final class MainActivity extends Activity {
     }
 
     private void showConnectionsDialog() {
+        new AlertDialog.Builder(this)
+                .setTitle("Connect music accounts")
+                .setItems(new String[]{"YouTube account", "YouTube Music", "Spotify sign-in",
+                        ".fmbot / Last.fm setup", "Connection status & requirements"}, (dialog, which) -> {
+                    if (which == 0) openServiceLink("https://www.youtube.com/account", new String[]{"com.google.android.youtube"});
+                    else if (which == 1) openServiceLink("https://music.youtube.com/", new String[]{"com.google.android.apps.youtube.music", "app.morphe.android.apps.youtube.music"});
+                    else if (which == 2) openServiceLink("https://accounts.spotify.com/login", new String[]{"com.spotify.music"});
+                    else if (which == 3) openServiceLink("https://fm.bot/", new String[0]);
+                    else showConnectionStatusDialog();
+                })
+                .setNegativeButton("Close", null)
+                .show();
+    }
+
+    private void showConnectionStatusDialog() {
         String explanation = "Account access status\n"
                 + "• YouTube: Spotty currently searches public catalog results; it does not hold a Google/YouTube account token.\n"
                 + "• YouTube Music: playback/search is handed to the official app or website; sign-in remains there.\n"
                 + "• Spotify: this Spotty app has no Spotify OAuth/API session. The legacy Spotatui build is separate.\n"
                 + "• .fmbot: its stats are based on Last.fm and Discord; it has no direct Spotty account API.\n\n"
-                + "These buttons open official services. They do not mark an account as connected or silently import private data. True in-app sync needs registered provider credentials and supported OAuth/API access.";
+                + "The listed destinations open official services; they do not mark an account as connected or silently import private data. True in-app sync needs registered provider credentials and supported OAuth/API access.";
         new AlertDialog.Builder(this)
-                .setTitle("Connect music accounts")
+                .setTitle("Connection status")
                 .setMessage(explanation)
-                .setItems(new String[]{"YouTube account", "YouTube Music", "Spotify sign-in", ".fmbot / Last.fm setup"}, (dialog, which) -> {
-                    if (which == 0) openServiceLink("https://www.youtube.com/account", new String[]{"com.google.android.youtube"});
-                    else if (which == 1) openServiceLink("https://music.youtube.com/", new String[]{"com.google.android.apps.youtube.music", "app.morphe.android.apps.youtube.music"});
-                    else if (which == 2) openServiceLink("https://accounts.spotify.com/login", new String[]{"com.spotify.music"});
-                    else openServiceLink("https://fm.bot/", new String[0]);
-                })
-                .setPositiveButton("Close", null)
+                .setPositiveButton("Done", null)
                 .show();
     }
 

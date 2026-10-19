@@ -123,7 +123,9 @@ final class MusicStats {
         StringBuilder out = new StringBuilder();
         out.append("Recorded by Spotty's in-app player only\n");
         out.append("Days played: ").append(playedDays).append("\n");
-        out.append("Minutes listened: ").append(totalMs / 60000L).append(" min (").append(formatDuration(totalMs)).append(")\n");
+        out.append("Minutes listened: ")
+                .append(String.format(Locale.ROOT, "%.1f", totalMs / 60000.0))
+                .append(" min (").append(formatDuration(totalMs)).append(")\n");
         out.append("Songs played: ").append(totalPlays).append(" successful starts\n\n");
         appendTop(out, "Top artists", artists, "No artist metadata recorded yet.");
         appendTop(out, "Top albums", albums, "Album metadata is not available from every source yet.");
@@ -251,11 +253,15 @@ final class MusicStats {
     }
 
     private static String formatDuration(long millis) {
-        long minutes = millis / 60000L;
-        long hours = minutes / 60L;
-        long rest = minutes % 60L;
-        return hours == 0L ? minutes + " minutes total"
-                : hours + " h " + String.format(Locale.ROOT, "%02d", rest) + " min total";
+        long totalSeconds = Math.max(0L, millis / 1000L);
+        long hours = totalSeconds / 3600L;
+        long minutes = (totalSeconds % 3600L) / 60L;
+        long seconds = totalSeconds % 60L;
+        if (hours > 0L) {
+            return hours + " h " + String.format(Locale.ROOT, "%02d", minutes) + " min total";
+        }
+        if (minutes > 0L) return minutes + " min " + seconds + " s total";
+        return seconds + " s total";
     }
 
     private static String sourceName(String source) {
