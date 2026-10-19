@@ -212,7 +212,7 @@ jobs:
         run: cargo install cargo-ndk --version 4.1.2 --locked
 
       - name: Cache Rust dependencies and Android core
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
