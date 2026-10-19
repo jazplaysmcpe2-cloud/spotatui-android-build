@@ -17,6 +17,7 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.PowerManager;
+import android.util.Log;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -355,6 +356,7 @@ public final class MusicPlaybackService extends Service {
 
     private void setState(String value, String message) {
         state = value;
+        Log.i("SpottyPlaybackService", "playback-state=" + value);
         updateNotification(message);
         broadcast(value, message);
     }
