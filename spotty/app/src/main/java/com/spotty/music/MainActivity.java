@@ -1636,6 +1636,8 @@ public final class MainActivity extends Activity {
             playbackQueue.add(smokeTrack);
             playbackQueueIndex = 0;
             beginPlayback(smokeTrack);
+            // The emulator gate also exercises the actual player sheet, not just the service.
+            showPlayerDialog(smokeTrack);
         }, 500L);
     }
 
