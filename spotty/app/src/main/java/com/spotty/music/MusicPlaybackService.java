@@ -18,7 +18,6 @@ import android.os.IBinder;
 import android.os.Looper;
 import android.os.PowerManager;
 
-import java.util.concurrent.TimeUnit;
 
 /**
  * Owns the active audio stream outside the Activity lifecycle. Playback starts only
@@ -100,6 +99,21 @@ public final class MusicPlaybackService extends Service {
     public static boolean hasTrack() {
         MusicPlaybackService service = instance;
         return service != null && !service.currentUrl.isEmpty();
+    }
+
+    public static String currentUrl() {
+        MusicPlaybackService service = instance;
+        return service == null ? "" : service.currentUrl;
+    }
+
+    public static String currentTitle() {
+        MusicPlaybackService service = instance;
+        return service == null ? "Spotty" : service.currentTitle;
+    }
+
+    public static String currentArtist() {
+        MusicPlaybackService service = instance;
+        return service == null ? "" : service.currentArtist;
     }
 
     public static boolean isPreparing() {
@@ -347,7 +361,7 @@ public final class MusicPlaybackService extends Service {
 
     private void acquireWakeLock() {
         try {
-            if (wakeLock != null && !wakeLock.isHeld()) wakeLock.acquire(TimeUnit.HOURS.toMillis(12));
+            if (wakeLock != null && !wakeLock.isHeld()) wakeLock.acquire();
         } catch (RuntimeException ignored) {}
     }
 
