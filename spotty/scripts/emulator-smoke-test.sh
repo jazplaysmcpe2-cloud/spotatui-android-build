@@ -135,6 +135,76 @@ if grep -Fq "YouTube • Morphe" "$HOME_XML"; then
   exit 1
 fi
 echo "[smoke] Discovery heading, unified search field, and absence of the old provider row verified."
+grep -Fq "ALL SOURCES" "$HOME_XML"
+grep -Fq "AUDIUS" "$HOME_XML"
+grep -Fq "OPEN ARCHIVE" "$HOME_XML"
+grep -Fq "LOCAL / FLAC" "$HOME_XML"
+echo "[smoke] Unified-source filter rail labels verified."
+
+# Theme switching used to recreate the Activity while a parent dialog was still attached.
+# Exercise several visually distinct themes through the actual Settings UI, then restore default.
+tap_ui_contains() {
+  local target="$1" xml_path="$GITHUB_WORKSPACE/release-output/ui-tap-window.xml"
+  local attempt=1 point="missing"
+  while [ "$attempt" -le 4 ]; do
+    timeout 20s adb shell uiautomator dump /sdcard/spotty-ui-tap.xml >/dev/null 2>&1 || true
+    timeout 20s adb pull /sdcard/spotty-ui-tap.xml "$xml_path" >/dev/null 2>&1 || true
+    point="$(python3 - "$xml_path" "$target" <<'PY'
+import re, sys, xml.etree.ElementTree as ET
+try: nodes = list(ET.parse(sys.argv[1]).getroot().iter("node"))
+except Exception: nodes = []
+target = sys.argv[2].casefold()
+for node in nodes:
+    value = node.attrib.get("text", "")
+    if target in value.casefold():
+        bounds = [int(n) for n in re.findall(r"\d+", node.attrib.get("bounds", ""))]
+        if len(bounds) == 4:
+            print(f"{(bounds[0]+bounds[2])//2},{(bounds[1]+bounds[3])//2}")
+            raise SystemExit(0)
+print("missing")
+PY
+    )"
+    if [[ "$point" =~ ^[0-9]+,[0-9]+$ ]]; then
+      local x y
+      x="${point%,*}"; y="${point#*,}"
+      timeout 15s adb shell input tap "$x" "$y"
+      return 0
+    fi
+    sleep 1
+    attempt=$((attempt + 1))
+  done
+  echo "Could not find tappable UI label: $target"
+  cat "$xml_path" 2>/dev/null || true
+  return 1
+}
+for theme in "Y2K Glass" "Midwest Emo" "Retro CRT" "Synthwave" "Frutiger Aero"; do
+  echo "[smoke] Switching theme through Settings: $theme"
+  tap_ui_contains "SETTINGS"
+  sleep 1
+  tap_ui_contains "Appearance & themes"
+  sleep 1
+  tap_ui_contains "$theme"
+  sleep 2
+  timeout 20s adb shell pidof com.spotty.music | tr -d '\r' | grep -Eq '[0-9]+'
+  timeout 20s adb shell uiautomator dump /sdcard/spotty-theme-home.xml >/dev/null 2>&1
+  timeout 20s adb pull /sdcard/spotty-theme-home.xml "$GITHUB_WORKSPACE/release-output/spotty-theme-home.xml" >/dev/null
+  grep -Fq "FRESH FINDS" "$GITHUB_WORKSPACE/release-output/spotty-theme-home.xml"
+done
+echo "[smoke] Five themes including the default were selected; Activity remained alive after each change."
+
+# The bottom mini-player must always lead to a usable player, even before a track is chosen.
+tap_ui_contains "Tap to open the player"
+sleep 1
+timeout 20s adb shell uiautomator dump /sdcard/spotty-player-entry.xml >/dev/null 2>&1
+timeout 20s adb pull /sdcard/spotty-player-entry.xml "$GITHUB_WORKSPACE/release-output/spotty-player-entry.xml" >/dev/null
+if ! grep -Eq "NOW PLAYING|Your next listen starts here" "$GITHUB_WORKSPACE/release-output/spotty-player-entry.xml"; then
+  echo "Mini-player tap failed to open a real player surface or its empty state."
+  cat "$GITHUB_WORKSPACE/release-output/spotty-player-entry.xml"
+  exit 1
+fi
+timeout 15s adb shell input keyevent 4
+echo "[smoke] Mini-player entry opens a real player screen or the dedicated empty-player state."
+
 echo "[smoke] Capturing signed release APK screenshot after system-dialog recovery"
 timeout 20s adb shell screencap -p /sdcard/spotty-smoke-test.png
 timeout 30s adb pull /sdcard/spotty-smoke-test.png "$SCREENSHOT"
