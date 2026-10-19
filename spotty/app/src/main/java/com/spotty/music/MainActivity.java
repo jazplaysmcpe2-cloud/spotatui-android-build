@@ -434,6 +434,7 @@ public final class MainActivity extends Activity {
         statusText.setText("Checking Spotty updates…");
         io.execute(() -> {
             try {
+                checkMorpheManagerUpdates(prefs);
                 JSONArray releases = requestJsonArray("https://api.github.com/repos/jazplaysmcpe2-cloud/spotatui-android-build/releases?per_page=100");
                 JSONObject release = null;
                 for (int i = 0; i < releases.length(); i++) {
@@ -482,6 +483,30 @@ public final class MainActivity extends Activity {
                 main.post(() -> statusText.setText("Update check unavailable • try again in Settings"));
             }
         });
+    }
+
+    private void checkMorpheManagerUpdates(SharedPreferences prefs) {
+        try {
+            JSONObject release = requestJsonObject("https://api.github.com/repos/MorpheApp/morphe-manager/releases/latest");
+            String tag = release.optString("tag_name", "");
+            String url = release.optString("html_url", "https://github.com/MorpheApp/morphe-manager/releases");
+            if (tag.isEmpty()) return;
+            String previous = prefs.getString("morphe_last_seen_tag", "");
+            prefs.edit().putString("morphe_last_seen_tag", tag).apply();
+            if (!previous.isEmpty() && !previous.equals(tag)) {
+                main.post(() -> new AlertDialog.Builder(this)
+                        .setTitle("Morphe update available")
+                        .setMessage("A new Morphe manager release (" + tag + ") is available. Spotty will not silently patch or replace other apps; review the official release and apply patches yourself.")
+                        .setPositiveButton("Open official release", (dialog, which) -> {
+                            try { startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url))); }
+                            catch (Exception e) { statusText.setText("Could not open the Morphe release page."); }
+                        })
+                        .setNegativeButton("Later", null)
+                        .show());
+            }
+        } catch (Exception ignored) {
+            // Morphe's release endpoint is optional; an outage must not block Spotty startup or its own update check.
+        }
     }
 
     private void showPlaylistImportDialog() {
