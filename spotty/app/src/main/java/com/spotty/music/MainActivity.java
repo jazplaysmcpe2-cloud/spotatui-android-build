@@ -95,6 +95,7 @@ public final class MainActivity extends Activity {
     private BroadcastReceiver playbackStateReceiver;
     private List<Track> playbackQueue = new ArrayList<>();
     private int playbackQueueIndex = -1;
+    private int activeBackgroundQueueIndex = 0;
     private TextView previousTrackButton;
     private TextView nextTrackButton;
     private String importedPlaylistName = "Imported playlist";
@@ -1132,7 +1133,7 @@ public final class MainActivity extends Activity {
                     preparing = false; paused = false;
                     if (playPauseButton != null) playPauseButton.setText("▶");
                     if (statusText != null) statusText.setText("Track finished");
-                    if (playbackQueue.size() > 1) main.postDelayed(() -> playNextTrack(), 300L);
+                    // The foreground playback service advances the persisted queue itself.
                 } else if ("stopped".equals(state)) {
                     preparing = false; paused = false;
                     if (playPauseButton != null) playPauseButton.setText("▶");
@@ -1836,6 +1837,41 @@ public final class MainActivity extends Activity {
         }
     }
 
+
+    private String serializeBackgroundQueue(Track current) {
+        List<Track> playable = new ArrayList<>();
+        for (Track candidate : playbackQueue) {
+            if (candidate.playUrl == null || candidate.playUrl.isEmpty()) continue;
+            if ("youtube".equals(candidate.provider) || "playlist-entry".equals(candidate.provider)) continue;
+            String url = candidate.playUrl;
+            if (!(url.startsWith("https://") || url.startsWith("http://") || url.startsWith("content://"))) continue;
+            playable.add(candidate);
+        }
+        activeBackgroundQueueIndex = -1;
+        for (int i = 0; i < playable.size(); i++) {
+            if (playable.get(i).playUrl.equals(current.playUrl)) {
+                activeBackgroundQueueIndex = i;
+                break;
+            }
+        }
+        if (activeBackgroundQueueIndex < 0) {
+            int insertAt = Math.max(0, Math.min(playbackQueueIndex, playable.size()));
+            playable.add(insertAt, current);
+            activeBackgroundQueueIndex = insertAt;
+        }
+        JSONArray serialized = new JSONArray();
+        for (Track track : playable) {
+            JSONObject item = new JSONObject();
+            try {
+                item.put("url", track.playUrl);
+                item.put("title", track.title);
+                item.put("artist", track.artist);
+                serialized.put(item);
+            } catch (Exception ignored) {}
+        }
+        return serialized.toString();
+    }
+
     private void beginPlayback(Track track) {
         if (track.playUrl.isEmpty()) {
             statusText.setText("No playable stream is available for this result.");
@@ -1850,7 +1886,9 @@ public final class MainActivity extends Activity {
         statusText.setText("Starting background audio…");
         requestNotificationPermissionIfNeeded();
         try {
-            MusicPlaybackService.play(this, track.playUrl, track.title, track.artist);
+            String backgroundQueue = serializeBackgroundQueue(track);
+            MusicPlaybackService.play(this, track.playUrl, track.title, track.artist,
+                    backgroundQueue, activeBackgroundQueueIndex);
         } catch (Exception e) {
             preparing = false;
             playPauseButton.setText("▶");
