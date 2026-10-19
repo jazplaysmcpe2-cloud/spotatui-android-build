@@ -70,6 +70,7 @@ import java.net.URL;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.CompletionService;
@@ -114,12 +115,20 @@ public final class MainActivity extends Activity {
     private final List<Track> visibleTracks = new ArrayList<>();
     private int youtubeSearchVersion = 0;
     private final List<Track> playlistTracks = new ArrayList<>();
+    private final List<UserPlaylist> userPlaylists = new ArrayList<>();
     private final List<Track> favoriteTracks = new ArrayList<>();
     private final List<Track> localTracks = new ArrayList<>();
     private BroadcastReceiver playbackStateReceiver;
     private List<Track> playbackQueue = new ArrayList<>();
     private int playbackQueueIndex = -1;
     private int activeBackgroundQueueIndex = 0;
+    private String activeUserPlaylist = "";
+    private String repeatMode = "off";
+    private String shuffleMode = "off";
+    private boolean preserveQueueOnNextPlay;
+    private TextView playerShuffleButton;
+    private TextView playerSmartShuffleButton;
+    private TextView playerRepeatButton;
     private TextView previousTrackButton;
     private TextView nextTrackButton;
     private String importedPlaylistName = "Imported playlist";
@@ -170,6 +179,14 @@ public final class MainActivity extends Activity {
         if (!savedPlaylist.trim().isEmpty()) playlistTracks.addAll(parsePlaylistTracks(savedPlaylist));
         favoriteTracks.addAll(readFavoriteTracks(savedPrefs.getString("favorite_tracks_json", "[]")));
         localTracks.addAll(readFavoriteTracks(savedPrefs.getString("local_tracks_json", "[]")));
+        userPlaylists.addAll(readUserPlaylists(savedPrefs.getString("user_playlists_json", "[]")));
+        String savedRepeatMode = savedPrefs.getString("repeat_mode", "off");
+        repeatMode = ("playlist".equals(savedRepeatMode) || "track".equals(savedRepeatMode)) ? savedRepeatMode : "off";
+        String savedShuffleMode = savedPrefs.getString("shuffle_mode", "off");
+        shuffleMode = ("shuffle".equals(savedShuffleMode) || "smart".equals(savedShuffleMode)) ? savedShuffleMode : "off";
+        playbackQueue.addAll(readFavoriteTracks(savedPrefs.getString("ui_queue_json", "[]")));
+        playbackQueueIndex = savedPrefs.getInt("ui_queue_index", -1);
+        if (playbackQueueIndex < 0 || playbackQueueIndex >= playbackQueue.size()) playbackQueueIndex = -1;
         getWindow().setStatusBarColor(BG);
         getWindow().setNavigationBarColor(BG);
         getWindow().getDecorView().setSystemUiVisibility(0);
@@ -179,6 +196,14 @@ public final class MainActivity extends Activity {
             currentTrack = new Track("background-playback", MusicPlaybackService.currentTitle(),
                     MusicPlaybackService.currentArtist(), "Background audio", "background",
                     MusicPlaybackService.currentUrl(), "", "");
+            int queueMatch = indexOfQueueUrl(currentTrack.playUrl);
+            if (queueMatch >= 0) {
+                playbackQueueIndex = queueMatch;
+                currentTrack = playbackQueue.get(queueMatch);
+            } else {
+                playbackQueue.add(0, currentTrack);
+                playbackQueueIndex = 0;
+            }
             nowPlayingText.setText(currentTrack.title + " — " + currentTrack.artist);
             playPauseButton.setText(MusicPlaybackService.isPlaying() ? "Ⅱ" : "▶");
         }
@@ -311,7 +336,7 @@ public final class MainActivity extends Activity {
         sourceRow = new LinearLayout(this);
         sourceRow.setOrientation(LinearLayout.HORIZONTAL);
         String[][] providers = {
-                {"ALL SOURCES", "all"}, {"AUDIUS", "audius"},
+                {"AUDIUS", "audius"},
                 {"OPEN ARCHIVE", "archive"}, {"DEEZER PREVIEWS", "deezer"},
                 {"YOUTUBE", "youtube"}, {"SOUNDCLOUD", "soundcloud"},
                 {"SPOTIFY / SPOTUI", "spotui"}, {"SOULSEEK", "soulseek"},
@@ -414,8 +439,9 @@ public final class MainActivity extends Activity {
         nav.setPadding(0, dp(6), 0, 0);
         TextView discoverTab = text("⌂  DISCOVER", 10, ACCENT, true);
         TextView libraryTab = text("♡  LIBRARY", 10, MUTED, true);
+        TextView queueTab = text("≡  QUEUE", 10, MUTED, true);
         TextView settingsTab = text("☷  SETTINGS", 10, MUTED, true);
-        for (TextView tab : new TextView[]{discoverTab, libraryTab, settingsTab}) {
+        for (TextView tab : new TextView[]{discoverTab, libraryTab, queueTab, settingsTab}) {
             tab.setGravity(Gravity.CENTER);
             tab.setPadding(dp(9), dp(9), dp(9), dp(9));
             nav.addView(tab, new LinearLayout.LayoutParams(0, dp(40), 1));
@@ -428,6 +454,7 @@ public final class MainActivity extends Activity {
             loadAllSources(searchField.getText().toString().trim());
         });
         libraryTab.setOnClickListener(v -> showLibraryDialog());
+        queueTab.setOnClickListener(v -> showQueueDialog());
         settingsTab.setOnClickListener(v -> showSettingsDialog());
         screen.addView(nav, new LinearLayout.LayoutParams(-1, -2));
 
@@ -1239,14 +1266,7 @@ public final class MainActivity extends Activity {
     private String serializePlaylistTracks(List<Track> tracks) {
         try {
             JSONObject root = new JSONObject();
-            JSONArray items = new JSONArray();
-            for (Track track : tracks) {
-                JSONObject item = new JSONObject();
-                item.put("title", track.title);
-                item.put("artist", track.artist);
-                items.put(item);
-            }
-            root.put("tracks", items);
+            root.put("tracks", new JSONArray(serializeTrackList(tracks)));
             return root.toString();
         } catch (Exception e) {
             StringBuilder fallback = new StringBuilder();
@@ -1264,7 +1284,11 @@ public final class MainActivity extends Activity {
                 JSONObject root = new JSONObject(trimmed);
                 JSONArray items = root.optJSONArray("tracks");
                 if (items == null) items = root.optJSONArray("items");
-                if (items != null) return parseSpotifyExportItems(items);
+                if (items != null) {
+                    JSONObject first = items.optJSONObject(0);
+                    if (first != null && (first.has("playUrl") || first.has("provider"))) return readFavoriteTracks(items.toString());
+                    return parseSpotifyExportItems(items);
+                }
             } catch (Exception ignored) {}
         }
         String[] lines = raw.replace("\r", "").split("\n");
@@ -1410,7 +1434,7 @@ public final class MainActivity extends Activity {
             // Put direct, in-app streams first. Non-playable YouTube listings remain accessible,
             // but only through an explicit action in the player sheet.
             merged.sort((a, b) -> Integer.compare(playbackRank(a), playbackRank(b)));
-            if (merged.size() > 80) merged = new ArrayList<>(merged.subList(0, 80));
+            if (merged.size() > 120) merged = new ArrayList<>(merged.subList(0, 120));
             final List<Track> finalTracks = merged;
             final int sourcesOk = responsive;
             main.post(() -> {
@@ -1491,9 +1515,9 @@ public final class MainActivity extends Activity {
 
     private List<Track> searchAudiusCatalogue(String query) throws Exception {
         String endpoint = query.isEmpty()
-                ? "https://api.audius.co/v1/tracks/trending?limit=24&filter_tracks=public&gate_condition=ungated"
+                ? "https://api.audius.co/v1/tracks/trending?limit=40&filter_tracks=public&gate_condition=ungated"
                 : "https://api.audius.co/v1/tracks/search?query=" + enc(query)
-                        + "&limit=24&filter_tracks=public&gate_condition=ungated";
+                        + "&limit=40&filter_tracks=public&gate_condition=ungated";
         JSONObject response = requestJsonObject(endpoint);
         JSONArray data = response.optJSONArray("data");
         if (data == null) throw new Exception("Audius returned no track list");
@@ -1517,8 +1541,8 @@ public final class MainActivity extends Activity {
 
     private List<Track> searchDeezerCatalogue(String query) throws Exception {
         String endpoint = query.isEmpty()
-                ? "https://api.deezer.com/chart/0/tracks?limit=24"
-                : "https://api.deezer.com/search?q=" + enc(query) + "&limit=24";
+                ? "https://api.deezer.com/chart/0/tracks?limit=40"
+                : "https://api.deezer.com/search?q=" + enc(query) + "&limit=40";
         JSONObject response = requestJsonObject(endpoint);
         JSONArray data = response.optJSONArray("data");
         if (data == null) throw new Exception("Deezer returned no track list");
@@ -1549,7 +1573,7 @@ public final class MainActivity extends Activity {
         if (!clean.isEmpty()) expression += " AND title:(" + clean + ")";
         String endpoint = "https://archive.org/advancedsearch.php?q=" + enc(expression)
                 + "&fl%5B%5D=identifier&fl%5B%5D=title&fl%5B%5D=creator&fl%5B%5D=licenseurl"
-                + "&rows=20&page=1&output=json&sort%5B%5D=downloads+desc";
+                + "&rows=35&page=1&output=json&sort%5B%5D=downloads+desc";
         JSONObject response = requestJsonObject(endpoint);
         JSONObject responseBlock = response.optJSONObject("response");
         JSONArray docs = responseBlock == null ? null : responseBlock.optJSONArray("docs");
@@ -1602,9 +1626,14 @@ public final class MainActivity extends Activity {
                     : favoriteTracks.size() + " saved tracks • stored on this device");
         } else if ("playlist".equals(source)) {
             resultHeading.setText("PLAYLIST • " + importedPlaylistName.toUpperCase(Locale.ROOT));
-            showTracks(playlistTracks, playlistTracks.isEmpty()
+            showTracks(new ArrayList<>(playlistTracks), playlistTracks.isEmpty()
                     ? "No imported tracks yet. Import a CSV, M3U, or pasted track list."
                     : playlistTracks.size() + " imported tracks • tap a track to open its options");
+        } else if ("user_playlist".equals(source)) {
+            UserPlaylist selected = findUserPlaylist(activeUserPlaylist);
+            resultHeading.setText("YOUR MIX • " + (selected == null ? "PLAYLIST" : selected.name.toUpperCase(Locale.ROOT)));
+            showTracks(selected == null ? new ArrayList<>() : new ArrayList<>(selected.tracks),
+                    selected == null ? "This playlist is no longer available." : selected.tracks.size() + " tracks • saved on this device");
         } else if ("youtube".equals(source)) loadYoutube(query);
         else if ("ytmusic".equals(source)) openYoutubeMusicSearch(query);
         else if ("archive".equals(source)) loadArchive(query);
@@ -2599,6 +2628,14 @@ public final class MainActivity extends Activity {
             source = "playlist";
             loadCurrentSource("");
         });
+        addSettingsRow(rows, "♫", "Your playlists", userPlaylists.size() + " saved mixes · add any playable result", () -> {
+            dialog.dismiss();
+            showUserPlaylistsDialog();
+        });
+        addSettingsRow(rows, "＋", "Create playlist", "Build a named mix from tracks in Discover or your library", () -> {
+            dialog.dismiss();
+            createUserPlaylist(null);
+        });
         addSettingsRow(rows, "＋", "Import playlist", "CSV, M3U or exported track lists", () -> {
             dialog.dismiss();
             showPlaylistImportDialog();
@@ -2632,6 +2669,119 @@ public final class MainActivity extends Activity {
             window.setNavigationBarColor(BG);
             window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
         }
+    }
+
+    private void showUserPlaylistsDialog() {
+        if (userPlaylists.isEmpty()) {
+            new AlertDialog.Builder(this).setTitle("Your playlists")
+                    .setMessage("Create your first playlist, then add tracks from the ⋮ menu or the player.")
+                    .setPositiveButton("Create playlist", (d, w) -> createUserPlaylist(null))
+                    .setNegativeButton("Close", null).show();
+            return;
+        }
+        String[] names = new String[userPlaylists.size() + 1];
+        for (int i = 0; i < userPlaylists.size(); i++) {
+            UserPlaylist p = userPlaylists.get(i);
+            names[i] = p.name + "  ·  " + p.tracks.size() + " tracks";
+        }
+        names[names.length - 1] = "＋  Create a new playlist";
+        new AlertDialog.Builder(this).setTitle("Your playlists").setItems(names, (d, which) -> {
+            if (which >= userPlaylists.size()) { createUserPlaylist(null); return; }
+            activeUserPlaylist = userPlaylists.get(which).name;
+            source = "user_playlist";
+            loadCurrentSource("");
+        }).setNegativeButton("Close", null).show();
+    }
+
+    private UserPlaylist findUserPlaylist(String name) {
+        if (name == null) return null;
+        for (UserPlaylist playlist : userPlaylists) if (playlist.name.equals(name)) return playlist;
+        return null;
+    }
+
+    private void createUserPlaylist(Track initialTrack) {
+        EditText nameInput = new EditText(this);
+        nameInput.setSingleLine(true);
+        nameInput.setTextColor(TEXT);
+        nameInput.setHintTextColor(MUTED);
+        nameInput.setHint("e.g. Late-night shoegaze");
+        nameInput.setText("My playlist");
+        nameInput.setPadding(dp(14), dp(10), dp(14), dp(10));
+        nameInput.setBackground(roundRect(PANEL_ALT, 14));
+        LinearLayout inputWrap = new LinearLayout(this);
+        inputWrap.setPadding(dp(20), dp(4), dp(20), dp(4));
+        inputWrap.addView(nameInput, new LinearLayout.LayoutParams(-1, dp(50)));
+        new AlertDialog.Builder(this).setTitle("Name your playlist").setView(inputWrap)
+                .setPositiveButton("Create", (d, w) -> {
+                    String name = nameInput.getText().toString().trim();
+                    if (name.isEmpty()) name = "My playlist";
+                    String base = name;
+                    int suffix = 2;
+                    while (findUserPlaylist(name) != null) name = base + " (" + suffix++ + ")";
+                    UserPlaylist created = new UserPlaylist(name);
+                    if (initialTrack != null) created.tracks.add(initialTrack);
+                    userPlaylists.add(created);
+                    activeUserPlaylist = created.name;
+                    persistUserPlaylists();
+                    source = "user_playlist";
+                    loadCurrentSource("");
+                    Toast.makeText(this, initialTrack == null ? "Playlist created" : "Playlist created and track added", Toast.LENGTH_SHORT).show();
+                }).setNegativeButton("Cancel", null).show();
+    }
+
+    private void choosePlaylistForTrack(Track track) {
+        if (track == null) return;
+        if (userPlaylists.isEmpty()) { createUserPlaylist(track); return; }
+        String[] names = new String[userPlaylists.size() + 1];
+        for (int i = 0; i < userPlaylists.size(); i++) {
+            UserPlaylist p = userPlaylists.get(i);
+            names[i] = p.name + "  ·  " + p.tracks.size() + " tracks";
+        }
+        names[names.length - 1] = "＋  New playlist…";
+        new AlertDialog.Builder(this).setTitle("Add to playlist").setItems(names, (d, which) -> {
+            if (which >= userPlaylists.size()) createUserPlaylist(track);
+            else addTrackToUserPlaylist(userPlaylists.get(which), track);
+        }).setNegativeButton("Cancel", null).show();
+    }
+
+    private void addTrackToUserPlaylist(UserPlaylist playlist, Track track) {
+        if (playlist == null || track == null) return;
+        playlist.tracks.add(track);
+        persistUserPlaylists();
+        Toast.makeText(this, "Added to " + playlist.name, Toast.LENGTH_SHORT).show();
+        if ("user_playlist".equals(source) && playlist.name.equals(activeUserPlaylist))
+            showTracks(new ArrayList<>(playlist.tracks), playlist.tracks.size() + " tracks • saved on this device");
+    }
+
+    private void persistUserPlaylists() {
+        JSONArray root = new JSONArray();
+        for (UserPlaylist playlist : userPlaylists) {
+            JSONObject item = new JSONObject();
+            try {
+                item.put("name", playlist.name);
+                item.put("tracks", new JSONArray(serializeTrackList(playlist.tracks)));
+                root.put(item);
+            } catch (Exception ignored) {}
+        }
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString("user_playlists_json", root.toString()).apply();
+    }
+
+    private List<UserPlaylist> readUserPlaylists(String raw) {
+        List<UserPlaylist> result = new ArrayList<>();
+        try {
+            JSONArray root = new JSONArray(raw);
+            for (int i = 0; i < root.length() && result.size() < 100; i++) {
+                JSONObject item = root.optJSONObject(i);
+                if (item == null) continue;
+                String name = item.optString("name", "").trim();
+                if (name.isEmpty()) continue;
+                UserPlaylist playlist = new UserPlaylist(name);
+                JSONArray tracks = item.optJSONArray("tracks");
+                if (tracks != null) playlist.tracks.addAll(readFavoriteTracks(tracks.toString()));
+                result.add(playlist);
+            }
+        } catch (Exception ignored) {}
+        return result;
     }
 
     private void addSettingsRow(LinearLayout parent, String symbol, String titleText, String detailText, Runnable action) {
@@ -2832,7 +2982,7 @@ public final class MainActivity extends Activity {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setPadding(dp(22), dp(12), dp(22), dp(18));
-        root.setBackgroundColor(BG);
+        root.setBackground(createThemeBackdrop());
 
         LinearLayout top = new LinearLayout(this);
         top.setGravity(Gravity.CENTER_VERTICAL);
@@ -2960,6 +3110,48 @@ public final class MainActivity extends Activity {
         next.setOnClickListener(v -> playNextTrack());
         content.addView(controls, new LinearLayout.LayoutParams(-1, -2));
 
+        LinearLayout modeRow = new LinearLayout(this);
+        modeRow.setOrientation(LinearLayout.HORIZONTAL);
+        modeRow.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams modeRowLp = new LinearLayout.LayoutParams(-1, -2);
+        modeRowLp.topMargin = dp(3);
+        modeRowLp.bottomMargin = dp(8);
+        playerShuffleButton = modeButton("SHUFFLE", "shuffle".equals(shuffleMode));
+        playerSmartShuffleButton = modeButton("SMART SHUFFLE", "smart".equals(shuffleMode));
+        playerRepeatButton = modeButton(repeatLabel(), !"off".equals(repeatMode));
+        for (TextView control : new TextView[]{playerShuffleButton, playerSmartShuffleButton, playerRepeatButton}) {
+            LinearLayout.LayoutParams modeLp = new LinearLayout.LayoutParams(0, dp(42), 1);
+            modeLp.leftMargin = dp(3);
+            modeLp.rightMargin = dp(3);
+            modeRow.addView(control, modeLp);
+        }
+        playerShuffleButton.setOnClickListener(v -> activateShuffleMode("shuffle"));
+        playerSmartShuffleButton.setOnClickListener(v -> activateShuffleMode("smart"));
+        playerRepeatButton.setOnClickListener(v -> cycleRepeatMode());
+        content.addView(modeRow, modeRowLp);
+        updatePlaybackModeButtons();
+
+        LinearLayout playlistActions = new LinearLayout(this);
+        playlistActions.setOrientation(LinearLayout.HORIZONTAL);
+        TextView playNextAction = text("＋  PLAY NEXT", 10, TEXT, true);
+        TextView savePlaylistAction = text("♫  ADD TO PLAYLIST", 10, TEXT, true);
+        for (TextView action : new TextView[]{playNextAction, savePlaylistAction}) {
+            action.setGravity(Gravity.CENTER);
+            action.setPadding(dp(5), dp(12), dp(5), dp(12));
+            action.setBackground(roundRect(PANEL_ALT, 14));
+        }
+        LinearLayout.LayoutParams nextActionLp = new LinearLayout.LayoutParams(0, -2, 1);
+        nextActionLp.rightMargin = dp(4);
+        LinearLayout.LayoutParams saveActionLp = new LinearLayout.LayoutParams(0, -2, 1);
+        saveActionLp.leftMargin = dp(4);
+        playlistActions.addView(playNextAction, nextActionLp);
+        playlistActions.addView(savePlaylistAction, saveActionLp);
+        playNextAction.setOnClickListener(v -> addTrackToQueue(activePlayerSelection == null ? track : activePlayerSelection, true));
+        savePlaylistAction.setOnClickListener(v -> choosePlaylistForTrack(activePlayerSelection == null ? track : activePlayerSelection));
+        LinearLayout.LayoutParams playlistActionsLp = new LinearLayout.LayoutParams(-1, -2);
+        playlistActionsLp.bottomMargin = dp(10);
+        content.addView(playlistActions, playlistActionsLp);
+
         if (needsExternalPlayback(track)) {
             TextView note = text("This catalogue entry does not provide a stream Spotty can play. Nothing leaves the app until you choose the destination below.", 11, MUTED, false);
             note.setGravity(Gravity.CENTER);
@@ -3009,6 +3201,9 @@ public final class MainActivity extends Activity {
             playerElapsedView = null;
             playerDurationView = null;
             playerToggleView = null;
+            playerShuffleButton = null;
+            playerSmartShuffleButton = null;
+            playerRepeatButton = null;
             playerTitleView = null;
             playerArtistView = null;
             playerSourceView = null;
@@ -3043,19 +3238,202 @@ public final class MainActivity extends Activity {
     }
 
     private void showQueueDialog() {
-        if (playbackQueue == null || playbackQueue.isEmpty()) {
-            Toast.makeText(this, "Play a result to build your queue.", Toast.LENGTH_SHORT).show();
+        if (playbackQueue.isEmpty() && currentTrack != null) {
+            playbackQueue.add(currentTrack);
+            playbackQueueIndex = MusicPlaybackService.hasTrack() ? 0 : -1;
+            persistUiQueue();
+        }
+        if (playbackQueue.isEmpty() && !visibleTracks.isEmpty()) {
+            playbackQueue.addAll(visibleTracks);
+            playbackQueueIndex = -1;
+            persistUiQueue();
+        }
+        if (playbackQueue.isEmpty()) {
+            Toast.makeText(this, "Add a track from Discover to start your queue.", Toast.LENGTH_SHORT).show();
             return;
         }
-        String[] titles = new String[playbackQueue.size()];
-        for (int i = 0; i < playbackQueue.size(); i++) {
-            Track item = playbackQueue.get(i);
-            titles[i] = (i == playbackQueueIndex ? "▶  " : "") + item.title + " — " + item.artist;
+        Dialog dialog = new Dialog(this);
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(dp(18), dp(14), dp(18), dp(18));
+        root.setBackground(createThemeBackdrop());
+        LinearLayout heading = new LinearLayout(this);
+        heading.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout titleStack = new LinearLayout(this);
+        titleStack.setOrientation(LinearLayout.VERTICAL);
+        titleStack.addView(text("YOUR LISTENING ROOM", 9, ACCENT, true));
+        TextView title = text("Playing queue", 27, TEXT, true);
+        LinearLayout.LayoutParams titleLp = new LinearLayout.LayoutParams(-1, -2);
+        titleLp.topMargin = dp(4);
+        titleStack.addView(title, titleLp);
+        heading.addView(titleStack, new LinearLayout.LayoutParams(0, -2, 1));
+        TextView close = text("×", 27, TEXT, true);
+        close.setGravity(Gravity.CENTER);
+        close.setContentDescription("Close queue");
+        close.setBackground(roundRect(PANEL, 50));
+        heading.addView(close, new LinearLayout.LayoutParams(dp(44), dp(44)));
+        close.setOnClickListener(v -> dialog.dismiss());
+        root.addView(heading);
+        TextView explanation = text("Move songs, play any position, or clear only the upcoming part of your mix.", 12, MUTED, false);
+        explanation.setLineSpacing(dp(2), 1.04f);
+        LinearLayout.LayoutParams explanationLp = new LinearLayout.LayoutParams(-1, -2);
+        explanationLp.topMargin = dp(6);
+        root.addView(explanation, explanationLp);
+
+        LinearLayout tools = new LinearLayout(this);
+        tools.setGravity(Gravity.CENTER_VERTICAL);
+        TextView mixMode = text("SHUFFLE: " + shuffleMode.toUpperCase(Locale.ROOT) + "  ·  REPEAT: " + repeatMode.toUpperCase(Locale.ROOT), 9, ACCENT, true);
+        mixMode.setMaxLines(2);
+        tools.addView(mixMode, new LinearLayout.LayoutParams(0, -2, 1));
+        TextView clearUpcoming = text("CLEAR UPCOMING", 9, TEXT, true);
+        clearUpcoming.setGravity(Gravity.CENTER);
+        clearUpcoming.setPadding(dp(8), dp(10), dp(8), dp(10));
+        clearUpcoming.setBackground(roundRect(PANEL_ALT, 12));
+        tools.addView(clearUpcoming);
+        Runnable[] refresh = new Runnable[1];
+        clearUpcoming.setOnClickListener(v -> {
+            int keepThrough = MusicPlaybackService.hasTrack() ? Math.max(-1, playbackQueueIndex) : -1;
+            for (int i = playbackQueue.size() - 1; i > keepThrough; i--) playbackQueue.remove(i);
+            if (keepThrough < 0) playbackQueueIndex = -1;
+            persistUiQueue();
+            syncQueueToService();
+            refresh[0].run();
+        });
+        LinearLayout.LayoutParams toolsLp = new LinearLayout.LayoutParams(-1, -2);
+        toolsLp.topMargin = dp(14);
+        root.addView(tools, toolsLp);
+
+        ScrollView scroller = new ScrollView(this);
+        scroller.setFillViewport(false);
+        scroller.setVerticalScrollBarEnabled(false);
+        LinearLayout queueRows = new LinearLayout(this);
+        queueRows.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams scrollerLp = new LinearLayout.LayoutParams(-1, 0, 1);
+        scrollerLp.topMargin = dp(10);
+        root.addView(scroller, scrollerLp);
+        scroller.addView(queueRows);
+
+        refresh[0] = () -> {
+            queueRows.removeAllViews();
+            if (playbackQueue.isEmpty()) {
+                TextView empty = text("Your queue is empty. Add songs from the ⋮ menu on any result.", 14, MUTED, false);
+                empty.setPadding(dp(12), dp(24), dp(12), dp(24));
+                queueRows.addView(empty);
+                return;
+            }
+            for (int i = 0; i < playbackQueue.size(); i++) {
+                final int itemIndex = i;
+                Track item = playbackQueue.get(i);
+                boolean isCurrent = MusicPlaybackService.hasTrack() && i == playbackQueueIndex;
+                LinearLayout card = new LinearLayout(this);
+                card.setGravity(Gravity.CENTER_VERTICAL);
+                card.setPadding(dp(8), dp(8), dp(6), dp(8));
+                card.setBackground(roundRect(isCurrent ? PANEL_ALT : PANEL, 15));
+                LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(-1, -2);
+                cardLp.bottomMargin = dp(7);
+                queueRows.addView(card, cardLp);
+                TextView number = text(isCurrent ? "▶" : String.format(Locale.ROOT, "%02d", i + 1), 11,
+                        isCurrent ? ACCENT : MUTED, true);
+                number.setGravity(Gravity.CENTER);
+                card.addView(number, new LinearLayout.LayoutParams(dp(30), dp(38)));
+                FrameLayout cover = createCoverFrame(item, dp(48));
+                LinearLayout.LayoutParams coverLp = new LinearLayout.LayoutParams(dp(48), dp(48));
+                coverLp.leftMargin = dp(3);
+                coverLp.rightMargin = dp(9);
+                card.addView(cover, coverLp);
+                LinearLayout trackInfo = new LinearLayout(this);
+                trackInfo.setOrientation(LinearLayout.VERTICAL);
+                TextView trackName = text(item.title, 12, TEXT, true);
+                trackName.setMaxLines(2);
+                TextView trackArtist = text(item.artist, 10, MUTED, false);
+                trackArtist.setMaxLines(1);
+                trackInfo.addView(trackName);
+                LinearLayout.LayoutParams artistLp = new LinearLayout.LayoutParams(-1, -2);
+                artistLp.topMargin = dp(3);
+                trackInfo.addView(trackArtist, artistLp);
+                card.addView(trackInfo, new LinearLayout.LayoutParams(0, -2, 1));
+                trackInfo.setOnClickListener(v -> {
+                    playbackQueueIndex = itemIndex;
+                    preserveQueueOnNextPlay = true;
+                    playTrack(item);
+                    dialog.dismiss();
+                });
+                TextView up = queueMiniButton("↑", "Move up");
+                TextView down = queueMiniButton("↓", "Move down");
+                TextView remove = queueMiniButton("×", "Remove from queue");
+                card.addView(up);
+                card.addView(down);
+                card.addView(remove);
+                up.setEnabled(itemIndex > 0);
+                down.setEnabled(itemIndex < playbackQueue.size() - 1);
+                remove.setEnabled(!(MusicPlaybackService.hasTrack() && isCurrent));
+                up.setOnClickListener(v -> {
+                    if (itemIndex <= 0) return;
+                    Track active = playbackQueueIndex >= 0 && playbackQueueIndex < playbackQueue.size()
+                            ? playbackQueue.get(playbackQueueIndex) : null;
+                    Collections.swap(playbackQueue, itemIndex, itemIndex - 1);
+                    playbackQueueIndex = active == null ? playbackQueueIndex : playbackQueue.indexOf(active);
+                    persistUiQueue(); syncQueueToService(); refresh[0].run();
+                });
+                down.setOnClickListener(v -> {
+                    if (itemIndex >= playbackQueue.size() - 1) return;
+                    Track active = playbackQueueIndex >= 0 && playbackQueueIndex < playbackQueue.size()
+                            ? playbackQueue.get(playbackQueueIndex) : null;
+                    Collections.swap(playbackQueue, itemIndex, itemIndex + 1);
+                    playbackQueueIndex = active == null ? playbackQueueIndex : playbackQueue.indexOf(active);
+                    persistUiQueue(); syncQueueToService(); refresh[0].run();
+                });
+                remove.setOnClickListener(v -> {
+                    if (MusicPlaybackService.hasTrack() && itemIndex == playbackQueueIndex) {
+                        Toast.makeText(this, "The playing track stays in the queue until it finishes.", Toast.LENGTH_SHORT).show();
+                        return;
+                    }
+                    playbackQueue.remove(itemIndex);
+                    if (itemIndex < playbackQueueIndex) playbackQueueIndex--;
+                    if (playbackQueue.isEmpty()) playbackQueueIndex = -1;
+                    persistUiQueue(); syncQueueToService(); refresh[0].run();
+                });
+            }
+        };
+
+        TextView addVisible = text("＋  ADD CURRENT RESULTS TO QUEUE", 10, TEXT, true);
+        addVisible.setGravity(Gravity.CENTER);
+        addVisible.setPadding(dp(10), dp(14), dp(10), dp(14));
+        addVisible.setBackground(roundRect(PANEL_ALT, 15));
+        LinearLayout.LayoutParams addVisibleLp = new LinearLayout.LayoutParams(-1, -2);
+        addVisibleLp.topMargin = dp(10);
+        root.addView(addVisible, addVisibleLp);
+        addVisible.setOnClickListener(v -> {
+            for (Track track : new ArrayList<>(visibleTracks)) addTrackToQueue(track, false);
+            refresh[0].run();
+        });
+        TextView footer = text("Changes are saved on this device. External-only listings still require their official player.", 10, MUTED, false);
+        footer.setGravity(Gravity.CENTER);
+        footer.setPadding(dp(6), dp(10), dp(6), 0);
+        root.addView(footer);
+        dialog.setContentView(root);
+        dialog.setCancelable(true);
+        dialog.show();
+        Window window = dialog.getWindow();
+        if (window != null) {
+            window.setBackgroundDrawable(new ColorDrawable(BG));
+            window.setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT);
+            window.setStatusBarColor(BG);
+            window.setNavigationBarColor(BG);
+            window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
         }
-        new AlertDialog.Builder(this).setTitle("Up next").setItems(titles, (dialog, which) -> {
-            playbackQueueIndex = which;
-            playTrack(playbackQueue.get(which));
-        }).setNegativeButton("Close", null).show();
+        refresh[0].run();
+    }
+
+    private TextView queueMiniButton(String symbol, String description) {
+        TextView button = text(symbol, 17, TEXT, true);
+        button.setGravity(Gravity.CENTER);
+        button.setContentDescription(description);
+        button.setBackground(roundRect(PANEL_ALT, 50));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(30), dp(34));
+        lp.leftMargin = dp(3);
+        button.setLayoutParams(lp);
+        return button;
     }
 
     private void showTracks(List<Track> tracks, String status) {
@@ -3139,6 +3517,14 @@ public final class MainActivity extends Activity {
                         showTracks(new ArrayList<>(favoriteTracks), favoriteTracks.size() + " saved tracks on this device");
                     }
                 });
+                TextView more = text("⋮", 23, TEXT, true);
+                more.setGravity(Gravity.CENTER);
+                more.setContentDescription("More options for " + track.title);
+                more.setBackground(roundRect(PANEL_ALT, 50));
+                LinearLayout.LayoutParams moreLp = new LinearLayout.LayoutParams(dp(36), dp(39));
+                moreLp.leftMargin = dp(4);
+                card.addView(more, moreLp);
+                more.setOnClickListener(v -> showTrackActions(track));
 
                 card.setOnClickListener(v -> playTrack(track));
                 LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(-1, -2);
@@ -3374,10 +3760,13 @@ public final class MainActivity extends Activity {
             return;
         }
         int visibleIndex = visibleTracks.indexOf(track);
-        if (visibleIndex >= 0) {
+        if (visibleIndex >= 0 && !preserveQueueOnNextPlay) {
             playbackQueue = new ArrayList<>(visibleTracks);
             playbackQueueIndex = visibleIndex;
+            if (!"off".equals(shuffleMode)) shuffleUpcomingTracks();
         }
+        preserveQueueOnNextPlay = false;
+        persistUiQueue();
         if (needsExternalPlayback(track)) {
             currentTrack = track;
             nowPlayingText.setText(track.title + " · ready to open externally");
@@ -3595,6 +3984,9 @@ public final class MainActivity extends Activity {
                 item.put("playUrl", track.playUrl);
                 item.put("artworkUrl", track.artworkUrl);
                 item.put("license", track.license);
+                item.put("album", track.album);
+                item.put("genre", track.genre);
+                item.put("playlist", track.playlist);
                 array.put(item);
             } catch (Exception ignored) {}
         }
@@ -3615,7 +4007,8 @@ public final class MainActivity extends Activity {
                         || ("local".equals(provider) && playUrl.startsWith("content://")))) continue;
                 tracks.add(new Track(item.optString("id", ""), item.optString("title", ""),
                         item.optString("artist", ""), item.optString("subtitle", ""),
-                        provider, playUrl, item.optString("artworkUrl", ""), item.optString("license", "")));
+                        provider, playUrl, item.optString("artworkUrl", ""), item.optString("license", ""),
+                        item.optString("album", ""), item.optString("genre", ""), item.optString("playlist", "")));
             }
         } catch (Exception ignored) {}
         return tracks;
@@ -3623,13 +4016,18 @@ public final class MainActivity extends Activity {
 
     private void playNextTrack() {
         if (playbackQueue.isEmpty()) {
-            statusText.setText("Play a result first to start a queue.");
+            statusText.setText("Add a result to the queue first.");
             return;
         }
-        playbackQueueIndex = (playbackQueueIndex + 1) % playbackQueue.size();
+        if (playbackQueueIndex + 1 >= playbackQueue.size()) {
+            if (!"playlist".equals(repeatMode)) { statusText.setText("You are at the end of the queue."); return; }
+            playbackQueueIndex = 0;
+        } else playbackQueueIndex++;
         Track track = playbackQueue.get(playbackQueueIndex);
         statusText.setText("Next • " + track.title);
+        preserveQueueOnNextPlay = true;
         playTrack(track);
+        persistUiQueue();
     }
 
     private void playPreviousTrack() {
@@ -3642,10 +4040,174 @@ public final class MainActivity extends Activity {
             statusText.setText("Restarted track");
             return;
         }
+        if (playbackQueueIndex <= 0 && !"playlist".equals(repeatMode)) {
+            statusText.setText("You are at the beginning of the queue.");
+            MusicPlaybackService.seekToStart();
+            return;
+        }
         playbackQueueIndex = (playbackQueueIndex - 1 + playbackQueue.size()) % playbackQueue.size();
         Track track = playbackQueue.get(playbackQueueIndex);
         statusText.setText("Previous • " + track.title);
+        preserveQueueOnNextPlay = true;
         playTrack(track);
+        persistUiQueue();
+    }
+
+    private void addTrackToQueue(Track track, boolean playNext) {
+        if (track == null) return;
+        if (playbackQueue.isEmpty() && currentTrack != null && MusicPlaybackService.hasTrack()) {
+            playbackQueue.add(currentTrack);
+            playbackQueueIndex = 0;
+        }
+        int insertion = playbackQueue.size();
+        if (playNext) insertion = MusicPlaybackService.hasTrack() && playbackQueueIndex >= 0
+                ? Math.min(playbackQueueIndex + 1, playbackQueue.size()) : 0;
+        playbackQueue.add(insertion, track);
+        if (playbackQueueIndex >= insertion) playbackQueueIndex++;
+        persistUiQueue();
+        syncQueueToService();
+        Toast.makeText(this, playNext ? "Added to play next" : "Added to queue", Toast.LENGTH_SHORT).show();
+    }
+
+    private void persistUiQueue() {
+        if (playbackQueueIndex < 0 || playbackQueueIndex >= playbackQueue.size()) {
+            if (!MusicPlaybackService.hasTrack()) playbackQueueIndex = -1;
+        }
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                .putString("ui_queue_json", serializeTrackList(playbackQueue))
+                .putInt("ui_queue_index", playbackQueueIndex)
+                .putString("repeat_mode", repeatMode)
+                .putString("shuffle_mode", shuffleMode)
+                .apply();
+    }
+
+    private int indexOfQueueUrl(String url) {
+        if (url == null || url.isEmpty()) return -1;
+        for (int i = 0; i < playbackQueue.size(); i++) if (url.equals(playbackQueue.get(i).playUrl)) return i;
+        return -1;
+    }
+
+    private void syncQueueToService() {
+        persistUiQueue();
+        if (!MusicPlaybackService.hasTrack() || currentTrack == null || needsExternalPlayback(currentTrack)) return;
+        String queueJson = serializeBackgroundQueue(currentTrack);
+        MusicPlaybackService.updateQueue(this, queueJson, activeBackgroundQueueIndex, repeatMode);
+    }
+
+    private TextView modeButton(String label, boolean active) {
+        TextView button = text(label, 9, active ? Color.WHITE : TEXT, true);
+        button.setGravity(Gravity.CENTER);
+        button.setPadding(dp(3), dp(6), dp(3), dp(6));
+        button.setMaxLines(2);
+        button.setBackground(roundRect(active ? ACCENT : PANEL_ALT, 13));
+        return button;
+    }
+
+    private String repeatLabel() {
+        if ("playlist".equals(repeatMode)) return "REPEAT PLAYLIST";
+        if ("track".equals(repeatMode)) return "REPEAT TRACK";
+        return "REPEAT OFF";
+    }
+
+    private void updatePlaybackModeButtons() {
+        if (playerShuffleButton != null) {
+            boolean active = "shuffle".equals(shuffleMode);
+            playerShuffleButton.setText(active ? "✓ SHUFFLE" : "SHUFFLE");
+            playerShuffleButton.setTextColor(active ? Color.WHITE : TEXT);
+            playerShuffleButton.setBackground(roundRect(active ? ACCENT : PANEL_ALT, 13));
+        }
+        if (playerSmartShuffleButton != null) {
+            boolean active = "smart".equals(shuffleMode);
+            playerSmartShuffleButton.setText(active ? "✦ SMART SHUFFLE" : "SMART SHUFFLE");
+            playerSmartShuffleButton.setTextColor(active ? Color.WHITE : TEXT);
+            playerSmartShuffleButton.setBackground(roundRect(active ? ACCENT : PANEL_ALT, 13));
+        }
+        if (playerRepeatButton != null) {
+            boolean active = !"off".equals(repeatMode);
+            playerRepeatButton.setText(repeatLabel());
+            playerRepeatButton.setTextColor(active ? Color.WHITE : TEXT);
+            playerRepeatButton.setBackground(roundRect(active ? ACCENT : PANEL_ALT, 13));
+        }
+    }
+
+    private void activateShuffleMode(String requestedMode) {
+        shuffleMode = requestedMode.equals(shuffleMode) ? "off" : requestedMode;
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString("shuffle_mode", shuffleMode).apply();
+        if (!"off".equals(shuffleMode)) shuffleUpcomingTracks();
+        updatePlaybackModeButtons();
+        persistUiQueue();
+        syncQueueToService();
+        statusText.setText("Shuffle mode • " + shuffleMode.toUpperCase(Locale.ROOT));
+    }
+
+    private void shuffleUpcomingTracks() {
+        if (playbackQueue.size() < 2) return;
+        int start = (MusicPlaybackService.hasTrack() && playbackQueueIndex >= 0)
+                ? playbackQueueIndex + 1 : Math.max(0, playbackQueueIndex);
+        if (start >= playbackQueue.size() - 1) return;
+        List<Track> upcoming = new ArrayList<>(playbackQueue.subList(start, playbackQueue.size()));
+        Collections.shuffle(upcoming);
+        if ("smart".equals(shuffleMode)) {
+            final Track anchor = playbackQueueIndex >= 0 && playbackQueueIndex < playbackQueue.size()
+                    ? playbackQueue.get(playbackQueueIndex) : (upcoming.isEmpty() ? null : upcoming.get(0));
+            if (anchor != null) upcoming.sort((a, b) -> Integer.compare(smartShuffleScore(b, anchor), smartShuffleScore(a, anchor)));
+        }
+        for (int i = start; i < playbackQueue.size(); i++) playbackQueue.remove(i);
+        playbackQueue.addAll(upcoming);
+    }
+
+    private int smartShuffleScore(Track candidate, Track anchor) {
+        if (candidate == null || anchor == null) return 0;
+        int score = 0;
+        if (!candidate.artist.isEmpty() && candidate.artist.equalsIgnoreCase(anchor.artist)) score += 5;
+        if (!candidate.genre.isEmpty() && candidate.genre.equalsIgnoreCase(anchor.genre)) score += 4;
+        if (!candidate.album.isEmpty() && candidate.album.equalsIgnoreCase(anchor.album)) score += 3;
+        if (!candidate.provider.isEmpty() && candidate.provider.equals(anchor.provider)) score += 1;
+        return score;
+    }
+
+    private void cycleRepeatMode() {
+        if ("off".equals(repeatMode)) repeatMode = "playlist";
+        else if ("playlist".equals(repeatMode)) repeatMode = "track";
+        else repeatMode = "off";
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString("repeat_mode", repeatMode).apply();
+        updatePlaybackModeButtons();
+        persistUiQueue();
+        syncQueueToService();
+        statusText.setText("Repeat mode • " + repeatMode.toUpperCase(Locale.ROOT));
+    }
+
+    private void showTrackActions(Track track) {
+        if (track == null) return;
+        List<String> actions = new ArrayList<>();
+        actions.add("Play now");
+        actions.add("Play next");
+        actions.add("Add to queue");
+        actions.add("Add to playlist");
+        if ("archive".equals(track.provider)) actions.add("Download licensed audio");
+        if ("local".equals(track.provider)) actions.add("Remove from local library");
+        if ("user_playlist".equals(source)) actions.add("Remove from this playlist");
+        String[] choices = actions.toArray(new String[0]);
+        new AlertDialog.Builder(this).setTitle(track.title).setItems(choices, (d, which) -> {
+            String action = choices[which];
+            if ("Play now".equals(action)) playTrack(track);
+            else if ("Play next".equals(action)) addTrackToQueue(track, true);
+            else if ("Add to queue".equals(action)) addTrackToQueue(track, false);
+            else if ("Add to playlist".equals(action)) choosePlaylistForTrack(track);
+            else if ("Download licensed audio".equals(action)) downloadArchive(track);
+            else if ("Remove from local library".equals(action)) {
+                for (int i = localTracks.size() - 1; i >= 0; i--) if (sameTrack(localTracks.get(i), track)) localTracks.remove(i);
+                persistLocalTracks();
+                showTracks(new ArrayList<>(localTracks), localTracks.size() + " local files");
+            } else if ("Remove from this playlist".equals(action)) {
+                UserPlaylist playlist = findUserPlaylist(activeUserPlaylist);
+                if (playlist != null) {
+                    for (int i = playlist.tracks.size() - 1; i >= 0; i--) if (sameTrack(playlist.tracks.get(i), track)) { playlist.tracks.remove(i); break; }
+                    persistUserPlaylists();
+                    showTracks(new ArrayList<>(playlist.tracks), playlist.tracks.size() + " tracks • saved on this device");
+                }
+            }
+        }).setNegativeButton("Cancel", null).show();
     }
 
     private void togglePlayback() {
@@ -3761,6 +4323,12 @@ public final class MainActivity extends Activity {
         // The process-scoped I/O pool must survive Activity recreation; do not shut it down here.
         main.removeCallbacksAndMessages(null);
         super.onDestroy();
+    }
+
+    private static final class UserPlaylist {
+        final String name;
+        final List<Track> tracks = new ArrayList<>();
+        UserPlaylist(String name) { this.name = name == null || name.trim().isEmpty() ? "My playlist" : name.trim(); }
     }
 
     private static final class Track {

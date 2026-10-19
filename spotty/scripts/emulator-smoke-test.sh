@@ -171,7 +171,7 @@ try: nodes = list(ET.parse(sys.argv[1]).getroot().iter("node"))
 except Exception: nodes = []
 for node in nodes:
     value = node.attrib.get("text", "").upper()
-    if any(label in value for label in ("ALL SOURCES", "AUDIUS", "OPEN ARCHIVE", "DEEZER PREVIEWS", "SOUNDCLOUD", "SPOTIFY / SPOTUI", "SOULSEEK", "LOCAL / FLAC", "RADIO")):
+    if any(label in value for label in ("AUDIUS", "OPEN ARCHIVE", "DEEZER PREVIEWS", "SOUNDCLOUD", "SPOTIFY / SPOTUI", "SOULSEEK", "LOCAL / FLAC", "RADIO")):
         bounds = [int(n) for n in re.findall(r"\d+", node.attrib.get("bounds", ""))]
         if len(bounds) == 4:
             print((bounds[1] + bounds[3]) // 2)
@@ -222,6 +222,10 @@ for home_attempt in 1 2 3; do
 done
 grep -Fq "FRESH FINDS" "$HOME_XML"
 grep -Fq "Track, artist, mood, or a lyric" "$HOME_XML"
+if grep -Fq "ALL SOURCES" "$HOME_XML"; then
+  echo "The obsolete ALL SOURCES pill is still rendered in the source rail."
+  exit 1
+fi
 if grep -Fq "YouTube • Morphe" "$HOME_XML"; then
   echo "Legacy provider-selector UI was unexpectedly rendered."
   exit 1
@@ -229,8 +233,8 @@ fi
 echo "[smoke] Discovery heading, unified search field, and absence of the old provider row verified."
 # Only the first chip is required in the initial viewport. Verify the remaining labels
 # after scrolling the real rail rather than assuming off-screen views are accessible.
-ensure_rail_label_visible "ALL SOURCES"
-echo "[smoke] Initial source-rail label verified by viewport-aware scrolling."
+ensure_rail_label_visible "AUDIUS"
+echo "[smoke] Initial source rail verified without a redundant ALL SOURCES chip."
 for rail_label in "AUDIUS" "OPEN ARCHIVE" "DEEZER PREVIEWS" "YOUTUBE" "SOUNDCLOUD" "SPOTIFY / SPOTUI" "SOULSEEK" "LOCAL / FLAC" "RADIO"; do
   ensure_rail_label_visible "$rail_label"
 done
@@ -244,8 +248,7 @@ timeout 20s adb shell uiautomator dump /sdcard/spotty-spotui-handoff.xml >/dev/n
 timeout 20s adb pull /sdcard/spotty-spotui-handoff.xml "$GITHUB_WORKSPACE/release-output/spotty-spotui-handoff.xml" >/dev/null
 grep -Fq "SPOTIFY • SPOTUI HANDOFF" "$GITHUB_WORKSPACE/release-output/spotty-spotui-handoff.xml"
 grep -Fq "Open Spotui player" "$GITHUB_WORKSPACE/release-output/spotty-spotui-handoff.xml"
-ensure_rail_label_visible "ALL SOURCES"
-tap_ui_contains "ALL SOURCES"
+tap_ui_contains "DISCOVER"
 sleep 1
 
 # Submit a real query and verify the result heading changes; then exercise a specific source filter.
@@ -356,7 +359,19 @@ grep -Fq "Spotty playback test" "$PLAYER_XML"
 grep -Fq "SOURCE" "$PLAYER_XML"
 grep -Fq "ON THIS DEVICE" "$PLAYER_XML"
 grep -Fq 'class="android.widget.SeekBar"' "$PLAYER_XML"
-echo "[smoke] Player title, source footer, and seek control are visible."
+grep -Fq "SHUFFLE" "$PLAYER_XML"
+grep -Fq "SMART SHUFFLE" "$PLAYER_XML"
+grep -Fq "REPEAT OFF" "$PLAYER_XML"
+grep -Fq "ADD TO PLAYLIST" "$PLAYER_XML"
+echo "[smoke] Player title, seek control, shuffle, smart shuffle, repeat modes, and playlist action are visible."
+tap_ui_contains "Queue"
+sleep 1
+timeout 20s adb shell uiautomator dump /sdcard/spotty-queue-window.xml >/dev/null 2>&1
+timeout 20s adb pull /sdcard/spotty-queue-window.xml "$GITHUB_WORKSPACE/release-output/spotty-queue-window.xml" >/dev/null
+grep -Fq "Playing queue" "$GITHUB_WORKSPACE/release-output/spotty-queue-window.xml"
+grep -Fq "Spotty playback test" "$GITHUB_WORKSPACE/release-output/spotty-queue-window.xml"
+timeout 15s adb shell input keyevent 4
+echo "[smoke] The editable queue lists the current track."
 timeout 20s adb logcat -d -s SpottyPlaybackService:I > "$SERVICE_LOG"
 if ! grep -Fq "playback-state=playing" "$SERVICE_LOG"; then
   echo "The foreground playback service never reported that the real WAV stream started."

@@ -171,6 +171,30 @@ public final class MusicPlaybackService extends Service {
         if (service != null) service.stopPlaybackAndSelf();
     }
 
+    public static void updateQueue(Context context, String queueJson, int index, String repeatMode) {
+        android.content.SharedPreferences prefs = context.getSharedPreferences("spotty_preferences", Context.MODE_PRIVATE);
+        prefs.edit().putString("queue_json", queueJson == null ? "[]" : queueJson)
+                .putInt("queue_index", Math.max(0, index))
+                .putString("repeat_mode", repeatMode == null ? "off" : repeatMode)
+                .apply();
+        MusicPlaybackService service = instance;
+        if (service != null) {
+            service.handler.post(() -> {
+                String playingUrl = service.currentUrl;
+                service.restoreQueue(queueJson, index);
+                int playingIndex = -1;
+                for (int i = 0; i < service.playbackQueue.length(); i++) {
+                    JSONObject entry = service.playbackQueue.optJSONObject(i);
+                    if (entry != null && playingUrl.equals(entry.optString("url", ""))) { playingIndex = i; break; }
+                }
+                if (playingIndex >= 0) service.queueIndex = playingIndex;
+                service.currentUrl = playingUrl;
+                prefs.edit().putInt("queue_index", service.queueIndex).apply();
+                service.updateNotification("Queue updated");
+            });
+        }
+    }
+
     public static boolean hasTrack() {
         MusicPlaybackService service = instance;
         return service != null && !service.currentUrl.isEmpty();
@@ -426,8 +450,17 @@ public final class MusicPlaybackService extends Service {
             preparing = false;
             releaseCurrentPlayer();
             releaseWakeLock();
-            if (playbackQueue.length() > 1) {
-                queueIndex = (queueIndex + 1) % playbackQueue.length();
+            String repeatMode = getPreferences().getString("repeat_mode", "off");
+            if ("track".equals(repeatMode)) {
+                retryCount = 0;
+                trackPlayCounted = false;
+                setState("connecting", "Repeating track");
+                prepareCurrentStream();
+                return;
+            }
+            boolean hasNext = queueIndex + 1 < playbackQueue.length();
+            if (hasNext || ("playlist".equals(repeatMode) && playbackQueue.length() > 0)) {
+                queueIndex = hasNext ? queueIndex + 1 : 0;
                 JSONObject queued = playbackQueue.optJSONObject(queueIndex);
                 if (queued != null && !queued.optString("url", "").isEmpty()) {
                     currentUrl = queued.optString("url", "");
