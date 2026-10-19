@@ -186,6 +186,7 @@ public final class MainActivity extends Activity {
         sourceRow.addView(sourceButton("Open Archive", "archive"));
         sourceRow.addView(sourceButton("Deezer previews", "deezer"));
         sourceRow.addView(sourceButton("SoundCloud", "soundcloud"));
+        sourceRow.addView(sourceButton("Soulseek / FLAC", "soulseek"));
         sourceRow.addView(sourceButton("Local FLAC", "local"));
         sourceRow.addView(sourceButton("Radio", "radio"));
         sourceRow.addView(sourceButton("Playlists", "playlist"));
@@ -889,6 +890,7 @@ public final class MainActivity extends Activity {
         else if ("archive".equals(source)) loadArchive(query);
         else if ("deezer".equals(source)) loadDeezer(query);
         else if ("soundcloud".equals(source)) loadSoundCloud(query);
+        else if ("soulseek".equals(source)) loadSoulseekSource();
         else if ("local".equals(source)) loadLocalLibrary();
         else if ("radio".equals(source)) loadRadio(query);
         else loadAudius(query);
@@ -1255,37 +1257,94 @@ public final class MainActivity extends Activity {
     private void handleLocalFolderSelection(Intent data) {
         Uri treeUri = data.getData();
         if (treeUri == null) return;
+        final String rootDocumentId;
         try {
-            getContentResolver().takePersistableUriPermission(treeUri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
-            Uri childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri,
-                    DocumentsContract.getTreeDocumentId(treeUri));
+            try {
+                getContentResolver().takePersistableUriPermission(treeUri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            } catch (SecurityException | IllegalArgumentException ignored) {
+                // Some file providers give temporary but usable access instead.
+            }
+            rootDocumentId = DocumentsContract.getTreeDocumentId(treeUri);
+        } catch (Exception e) {
+            showError("Could not open this folder: " + shortError(e));
+            return;
+        }
+
+        statusText.setText("Scanning audio files and subfolders…");
+        final List<Track> existingTracks = new ArrayList<>(localTracks);
+        io.execute(() -> {
+            List<Track> discovered = new ArrayList<>();
+            List<String> folders = new ArrayList<>();
+            folders.add(rootDocumentId);
+            int foldersScanned = 0;
+            int entriesScanned = 0;
+            String scanWarning = "";
             String[] columns = new String[]{DocumentsContract.Document.COLUMN_DOCUMENT_ID,
                     DocumentsContract.Document.COLUMN_DISPLAY_NAME, DocumentsContract.Document.COLUMN_MIME_TYPE};
-            int added = 0;
-            try (Cursor cursor = getContentResolver().query(childrenUri, columns, null, null, null)) {
-                if (cursor != null) {
+
+            while (!folders.isEmpty() && foldersScanned < 500 && entriesScanned < 12000
+                    && existingTracks.size() + discovered.size() < 2500) {
+                String folderId = folders.remove(folders.size() - 1);
+                foldersScanned++;
+                Uri childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, folderId);
+                try (Cursor cursor = getContentResolver().query(childrenUri, columns, null, null, null)) {
+                    if (cursor == null) continue;
                     int idCol = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DOCUMENT_ID);
                     int nameCol = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DISPLAY_NAME);
                     int mimeCol = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_MIME_TYPE);
-                    while (cursor.moveToNext() && added < 500) {
-                        String name = nameCol >= 0 ? cursor.getString(nameCol) : "";
-                        String mime = mimeCol >= 0 ? cursor.getString(mimeCol) : "";
-                        if (idCol < 0 || !isSupportedAudioName(name)
-                                || (!mime.startsWith("audio/") && mime.length() > 0 && !mime.equals("application/octet-stream"))) continue;
+                    if (idCol < 0 || nameCol < 0) continue;
+
+                    while (cursor.moveToNext() && entriesScanned < 12000
+                            && existingTracks.size() + discovered.size() < 2500) {
+                        entriesScanned++;
                         String documentId = cursor.getString(idCol);
+                        String name = cursor.getString(nameCol);
+                        String mime = mimeCol >= 0 ? cursor.getString(mimeCol) : "";
+                        if (documentId == null || documentId.isEmpty()) continue;
+                        if (DocumentsContract.Document.MIME_TYPE_DIR.equals(mime)) {
+                            if (foldersScanned + folders.size() < 500) folders.add(documentId);
+                            continue;
+                        }
+                        // Trust a recognized audio extension even if a document provider
+                        // reports a non-standard MIME type for FLAC or other audio files.
+                        if (!isSupportedAudioName(name)) continue;
+
                         Uri documentUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, documentId);
-                        if (addLocalTrack(documentUri, name)) added++;
+                        String uri = documentUri.toString();
+                        if (containsLocalUri(existingTracks, uri) || containsLocalUri(discovered, uri)) continue;
+                        String lower = name.toLowerCase(Locale.ROOT);
+                        String format = lower.contains(".")
+                                ? lower.substring(lower.lastIndexOf('.') + 1).toUpperCase(Locale.ROOT) : "AUDIO";
+                        discovered.add(new Track(uri, name, "Local library",
+                                "Local file • " + format, "local", uri, "", "user-selected local file"));
                     }
+                } catch (Exception e) {
+                    if (scanWarning.isEmpty()) scanWarning = "Some folders could not be read.";
                 }
             }
-            persistLocalTracks();
-            source = "local";
-            refreshSourceButtons(sourceRow);
-            showTracks(new ArrayList<>(localTracks), added + " audio files imported from folder • " + localTracks.size() + " total");
-            resultHeading.setText("LOCAL AUDIO • FLAC / LOSSLESS");
-        } catch (Exception e) {
-            showError("Could not read this folder: " + shortError(e) + ". Try selecting individual files.");
-        }
+
+            final int folderCount = foldersScanned;
+            final int entryCount = entriesScanned;
+            final String warning = scanWarning;
+            main.post(() -> {
+                localTracks.addAll(discovered);
+                persistLocalTracks();
+                source = "local";
+                refreshSourceButtons(sourceRow);
+                showTracks(new ArrayList<>(localTracks), discovered.size() + " new audio files imported from "
+                        + folderCount + " folders • " + localTracks.size() + " total");
+                resultHeading.setText("LOCAL AUDIO • FLAC / LOSSLESS");
+                if (!warning.isEmpty()) statusText.setText(warning + " Imported " + discovered.size() + " audio files.");
+                else if (entryCount >= 12000 || folderCount >= 500 || localTracks.size() >= 2500) {
+                    statusText.setText("Scan reached its safety limit. Narrow the selected download folder to import more.");
+                } else statusText.setText("Folder scan complete.");
+            });
+        });
+    }
+
+    private boolean containsLocalUri(List<Track> tracks, String uri) {
+        for (Track track : tracks) if (uri.equals(track.playUrl)) return true;
+        return false;
     }
 
     private String getDocumentDisplayName(Uri uri) {
@@ -1320,6 +1379,57 @@ public final class MainActivity extends Activity {
     private void persistLocalTracks() {
         getSharedPreferences(PREFS, MODE_PRIVATE).edit()
                 .putString("local_tracks_json", serializeTrackList(localTracks)).apply();
+    }
+
+    private void loadSoulseekSource() {
+        resultHeading.setText("SOULSEEK • FLAC LIBRARY");
+        resultsList.removeAllViews();
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(18), dp(18), dp(18), dp(18));
+        card.setBackground(panelCardDrawable());
+        card.addView(text("Search with Soulseek, play in Spotty", 18, TEXT, true));
+        TextView detail = text("Soulseek is a peer-to-peer file-sharing network, not a streaming FLAC server. Open the Seeker client to search/download audio you have rights to, then import its download folder. Spotty will play your selected FLAC files locally at their original decoded quality.", 13, MUTED, false);
+        LinearLayout.LayoutParams detailLp = new LinearLayout.LayoutParams(-1, -2);
+        detailLp.topMargin = dp(10);
+        card.addView(detail, detailLp);
+
+        Button open = button("Open Seeker (Soulseek) ↗", ACCENT, BG);
+        open.setOnClickListener(v -> openSeeker());
+        LinearLayout.LayoutParams openLp = new LinearLayout.LayoutParams(-1, dp(46));
+        openLp.topMargin = dp(15);
+        card.addView(open, openLp);
+
+        Button importFolder = button("Import Soulseek download folder", PANEL_ALT, TEXT);
+        importFolder.setOnClickListener(v -> chooseLocalAudio());
+        LinearLayout.LayoutParams importLp = new LinearLayout.LayoutParams(-1, dp(46));
+        importLp.topMargin = dp(8);
+        card.addView(importFolder, importLp);
+
+        resultsList.addView(card, new LinearLayout.LayoutParams(-1, -2));
+        statusText.setText("Ready to open Seeker or import local FLAC files");
+    }
+
+    private void openSeeker() {
+        final String packageName = "com.companyname.andriodapp1";
+        try {
+            Intent launch = getPackageManager().getLaunchIntentForPackage(packageName);
+            if (launch != null) {
+                startActivity(launch);
+                statusText.setText("Opened Seeker • import downloaded files here when ready");
+                return;
+            }
+        } catch (Exception ignored) {}
+        new AlertDialog.Builder(this)
+                .setTitle("Seeker is not installed")
+                .setMessage("Seeker is a separate Soulseek client. Install it from its official project, then return to Spotty and import the folder where it saves downloads.")
+                .setPositiveButton("Open official project", (dialog, which) -> {
+                    try { startActivity(new Intent(Intent.ACTION_VIEW,
+                            Uri.parse("https://github.com/jackBonadies/SeekerAndroid"))); }
+                    catch (Exception ignored) { statusText.setText("Could not open the Seeker project link."); }
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
     }
 
     private void loadSoundCloud(String query) {
