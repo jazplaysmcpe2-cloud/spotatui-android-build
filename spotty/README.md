@@ -20,7 +20,7 @@ Track cards show artwork where the catalogue provides it, title, artist and a sm
 
 ## Background playback and permissions
 
-The native playback service owns the stream outside the Activity lifecycle. It uses Android's foreground-service/media-playback permissions and notification controls, requests audio focus, acquires a partial wake lock while playing, records listening time, and retries stream failures a limited number of times. Local files are selected with Android's document picker; the app does not request unrestricted storage access.
+The native playback service owns the stream outside the Activity lifecycle. It uses Android's foreground media-playback service and notification controls, requests audio focus, holds a partial wake lock during active playback and remote-stream reconnect attempts, records listening time, and keeps remote streams retrying with exponential backoff capped at 30 seconds. A network-availability callback triggers an earlier reconnect when connectivity returns. In a queue, repeatedly failing tracks are skipped when another distinct playable URL is available; local document/file failures have a bounded retry count. The emulator suite tests actual WAV playback, the foreground service, and multiple playback heartbeats across a screen-off interval. Local files are selected with Android's document picker; the app does not request unrestricted storage access.
 
 No Android app can guarantee uninterrupted 24/7 playback: the OS may force-stop it, battery management may restrict background activity, and providers can disconnect or remove media. On phones with aggressive battery optimisation, users may need to allow background activity for Spotty.
 
