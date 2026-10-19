@@ -8,6 +8,7 @@ on:
       - "tools/**"
       - "templates/**"
       - "smoke-test-android.sh"
+      - "spotty/**"
   pull_request:
     paths:
       - ".github/workflows/**"
@@ -15,6 +16,7 @@ on:
       - "tools/**"
       - "templates/**"
       - "smoke-test-android.sh"
+      - "spotty/**"
 
 permissions:
   contents: read
@@ -57,8 +59,11 @@ jobs:
           set -euo pipefail
           python -m py_compile patches/*.py tools/*.py
 
-      - name: Parse Android emulator smoke-test script
-        run: bash -n smoke-test-android.sh
+      - name: Parse Android emulator smoke-test scripts
+        run: |
+          set -euo pipefail
+          bash -n smoke-test-android.sh
+          bash -n spotty/scripts/emulator-smoke-test.sh
 
       - name: Check release branch guard and bounded triage policy
         run: |
@@ -69,4 +74,9 @@ jobs:
           grep -Fq "Open Spotify sign-in in browser" patches/patch_android_onboarding_auth.py
           grep -Fq "Spotify sign-in code" patches/patch_android_onboarding_auth.py
           grep -Fq "Fresh install did not expose a selectable Spotify pairing code" smoke-test-android.sh
-          echo "Release guard, bounded triage, and Android onboarding smoke gates are present."
+          grep -Fq "Refusing to publish a public APK without the persistent signing key" .github/workflows/build-spotty-android.yml
+          grep -Fq "android:foregroundServiceType=\"mediaPlayback\"" spotty/app/src/main/AndroidManifest.xml
+          grep -Fq "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" spotty/app/src/main/AndroidManifest.xml
+          grep -Fq "playback-state=playing" spotty/scripts/emulator-smoke-test.sh
+          grep -Fq "Spotty playback service did not remain a foreground media service" spotty/scripts/emulator-smoke-test.sh
+          echo "Legacy release guards and current Spotty signing, permissions, and playback smoke gates are present."
