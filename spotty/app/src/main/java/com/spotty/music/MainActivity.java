@@ -140,7 +140,7 @@ public final class MainActivity extends Activity {
             if (playerDurationView != null) playerDurationView.setText(duration > 0 ? formatDuration(duration / 1000) : "—:—");
             if (playerToggleView != null) {
                 playerToggleView.setText(checkingArchiveLicense ? "…" :
-                        (MusicPlaybackService.isPlaying() ? "Ⅱ" : (needsExternalPlayback(activePlayerSelection) ? "↗" : "▶")));
+                        (needsExternalPlayback(activePlayerSelection) ? "↗" : (MusicPlaybackService.isPlaying() ? "Ⅱ" : "▶")));
             }
             main.postDelayed(this, 450L);
         }
@@ -1358,8 +1358,6 @@ public final class MainActivity extends Activity {
         throw last == null ? new Exception("No YouTube catalog instance responded") : last;
     }
 
-    private int playbackRankPlaceholder() { return 0; }
-
     private void loadCurrentSource(String query) {
         if ("all".equals(source)) {
             loadAllSources(query);
@@ -1637,8 +1635,7 @@ public final class MainActivity extends Activity {
                 if (title != null && !title.isEmpty() && playerTitleView != null) playerTitleView.setText(title);
                 if (artist != null && playerArtistView != null) playerArtistView.setText(artist);
                 if (playerToggleView != null) {
-                    playerToggleView.setText("playing".equals(state) ? "Ⅱ" :
-                            ("connecting".equals(state) ? "…" : (needsExternalPlayback(activePlayerSelection) ? "↗" : "▶")));
+                    playerToggleView.setText("connecting".equals(state) ? "…" : (needsExternalPlayback(activePlayerSelection) ? "↗" : ("playing".equals(state) ? "Ⅱ" : "▶")));
                 }
                 if ("playing".equals(state)) {
                     preparing = false; paused = false;
@@ -2224,6 +2221,7 @@ public final class MainActivity extends Activity {
         art.setScaleType(ImageView.ScaleType.CENTER_CROP);
         art.setBackground(roundRect(PANEL_ALT, 16));
         art.setClipToOutline(true);
+        art.setVisibility(View.GONE);
         frame.addView(art, new FrameLayout.LayoutParams(-1, -1));
         if (track != null && !track.artworkUrl.isEmpty()) loadTrackArtwork(art, track.artworkUrl);
         else art.setVisibility(View.GONE);
@@ -2687,10 +2685,10 @@ public final class MainActivity extends Activity {
             d = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
                     new int[]{Color.rgb(64, 51, 38), PANEL});
             d.setCornerRadius(dp(radius));
-            d.setStroke(dp(1), Color.argb(105, ACCENT, ACCENT, ACCENT));
+            d.setStroke(dp(1), Color.argb(105, Color.red(ACCENT), Color.green(ACCENT), Color.blue(ACCENT)));
         } else if ("Retro CRT".equals(activeTheme)) {
             d = roundRect(PANEL, radius);
-            d.setStroke(dp(1), Color.argb(125, ACCENT, ACCENT, ACCENT));
+            d.setStroke(dp(1), Color.argb(125, Color.red(ACCENT), Color.green(ACCENT), Color.blue(ACCENT)));
         } else if ("Y2K Glass".equals(activeTheme)) {
             d = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
                     new int[]{PANEL_ALT, PANEL});
