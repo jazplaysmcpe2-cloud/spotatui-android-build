@@ -309,7 +309,9 @@ public final class MainActivity extends Activity {
         sourceRow.setOrientation(LinearLayout.HORIZONTAL);
         String[][] providers = {
                 {"ALL SOURCES", "all"}, {"AUDIUS", "audius"},
-                {"OPEN ARCHIVE", "archive"}, {"YOUTUBE", "youtube"},
+                {"OPEN ARCHIVE", "archive"}, {"DEEZER PREVIEWS", "deezer"},
+                {"YOUTUBE", "youtube"}, {"SOUNDCLOUD", "soundcloud"},
+                {"SPOTIFY / SPOTUI", "spotui"}, {"SOULSEEK", "soulseek"},
                 {"LOCAL / FLAC", "local"}, {"RADIO", "radio"}
         };
         for (String[] provider : providers) sourceRow.addView(sourceButton(provider[0], provider[1]));
@@ -1527,6 +1529,7 @@ public final class MainActivity extends Activity {
         else if ("archive".equals(source)) loadArchive(query);
         else if ("deezer".equals(source)) loadDeezer(query);
         else if ("soundcloud".equals(source)) loadSoundCloud(query);
+        else if ("spotui".equals(source)) loadSpotuiSource(query);
         else if ("soulseek".equals(source)) loadSoulseekSource();
         else if ("local".equals(source)) loadLocalLibrary();
         else if ("radio".equals(source)) loadRadio(query);
@@ -2079,6 +2082,37 @@ public final class MainActivity extends Activity {
                 })
                 .setNegativeButton("Cancel", null)
                 .show();
+    }
+
+    private void loadSpotuiSource(String query) {
+        resultHeading.setText("SPOTIFY • SPOTUI HANDOFF");
+        resultsList.removeAllViews();
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(18), dp(18), dp(18), dp(18));
+        card.setBackground(panelCardDrawable());
+        card.addView(text("Spotify belongs in Spotui.", 20, TEXT, true));
+        TextView detail = text(query == null || query.trim().isEmpty()
+                ? "Open the separate Spotui app for Spotify account sign-in and its own supported playback."
+                : "Your search: “" + query.trim() + "”. Spotify's private catalogue session is handled by Spotui; Spotty does not fabricate a logged-in Spotify result list.",
+                13, MUTED, false);
+        detail.setLineSpacing(dp(3), 1.05f);
+        LinearLayout.LayoutParams detailLp = new LinearLayout.LayoutParams(-1, -2);
+        detailLp.topMargin = dp(10);
+        card.addView(detail, detailLp);
+        Button open = button("Open Spotui player ↗", ACCENT, Color.WHITE);
+        open.setOnClickListener(v -> openSpotui());
+        LinearLayout.LayoutParams openLp = new LinearLayout.LayoutParams(-1, dp(48));
+        openLp.topMargin = dp(16);
+        card.addView(open, openLp);
+        TextView note = text("If Spotui is not installed, the button offers its official project page. Playback stays in Spotui rather than being falsely shown as playing in this player.",
+                11, MUTED, false);
+        note.setLineSpacing(dp(2), 1.05f);
+        LinearLayout.LayoutParams noteLp = new LinearLayout.LayoutParams(-1, -2);
+        noteLp.topMargin = dp(12);
+        card.addView(note, noteLp);
+        resultsList.addView(card, new LinearLayout.LayoutParams(-1, -2));
+        statusText.setText("Spotify playback is an explicit handoff to Spotui.");
     }
 
     private void loadSoundCloud(String query) {
