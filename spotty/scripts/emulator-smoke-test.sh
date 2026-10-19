@@ -234,7 +234,19 @@ echo "[smoke] Initial source-rail label verified by viewport-aware scrolling."
 for rail_label in "AUDIUS" "OPEN ARCHIVE" "DEEZER PREVIEWS" "YOUTUBE" "SOUNDCLOUD" "SPOTIFY / SPOTUI" "SOULSEEK" "LOCAL / FLAC" "RADIO"; do
   ensure_rail_label_visible "$rail_label"
 done
+
+# Verify the separate Spotui handoff immediately after the source rail has been inspected.
+# Keep this independent from search/filter interactions, which change result-list layout.
+ensure_rail_label_visible "SPOTIFY / SPOTUI"
+tap_ui_contains "SPOTIFY / SPOTUI"
+sleep 1
+timeout 20s adb shell uiautomator dump /sdcard/spotty-spotui-handoff.xml >/dev/null 2>&1
+timeout 20s adb pull /sdcard/spotty-spotui-handoff.xml "$GITHUB_WORKSPACE/release-output/spotty-spotui-handoff.xml" >/dev/null
+grep -Fq "SPOTIFY • SPOTUI HANDOFF" "$GITHUB_WORKSPACE/release-output/spotty-spotui-handoff.xml"
+grep -Fq "Open Spotui player" "$GITHUB_WORKSPACE/release-output/spotty-spotui-handoff.xml"
 ensure_rail_label_visible "ALL SOURCES"
+tap_ui_contains "ALL SOURCES"
+sleep 1
 
 # Submit a real query and verify the result heading changes; then exercise a specific source filter.
 tap_ui_contains "Track, artist, mood, or a lyric"
@@ -249,16 +261,6 @@ sleep 1
 timeout 20s adb shell uiautomator dump /sdcard/spotty-source-filter.xml >/dev/null 2>&1
 timeout 20s adb pull /sdcard/spotty-source-filter.xml "$GITHUB_WORKSPACE/release-output/spotty-source-filter.xml" >/dev/null
 grep -Fq "AUDIUS SEARCH" "$GITHUB_WORKSPACE/release-output/spotty-source-filter.xml"
-ensure_rail_label_visible "SPOTIFY / SPOTUI"
-tap_ui_contains "SPOTIFY / SPOTUI"
-sleep 1
-timeout 20s adb shell uiautomator dump /sdcard/spotty-spotui-handoff.xml >/dev/null 2>&1
-timeout 20s adb pull /sdcard/spotty-spotui-handoff.xml "$GITHUB_WORKSPACE/release-output/spotty-spotui-handoff.xml" >/dev/null
-grep -Fq "SPOTIFY • SPOTUI HANDOFF" "$GITHUB_WORKSPACE/release-output/spotty-spotui-handoff.xml"
-grep -Fq "Open Spotui player" "$GITHUB_WORKSPACE/release-output/spotty-spotui-handoff.xml"
-ensure_rail_label_visible "ALL SOURCES"
-tap_ui_contains "ALL SOURCES"
-sleep 1
 echo "[smoke] Search submit, source filtering, and the explicit Spotui handoff view work."
 
 
