@@ -1291,14 +1291,14 @@ public final class MainActivity extends Activity {
             GradientDrawable d = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
                     new int[]{PANEL_ALT, PANEL});
             d.setCornerRadius(dp(16));
-            d.setStroke(dp(1), Color.argb(100, ACCENT));
+            d.setStroke(dp(1), Color.argb(100, Color.red(ACCENT), Color.green(ACCENT), Color.blue(ACCENT)));
             return d;
         }
         if ("Dark Academia".equals(activeTheme)) {
             GradientDrawable d = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
                     new int[]{Color.rgb(76, 62, 43), Color.rgb(43, 37, 31)});
             d.setCornerRadius(dp(15));
-            d.setStroke(dp(1), Color.argb(110, ACCENT));
+            d.setStroke(dp(1), Color.argb(110, Color.red(ACCENT), Color.green(ACCENT), Color.blue(ACCENT)));
             return d;
         }
         return roundRect(PANEL, 15);
