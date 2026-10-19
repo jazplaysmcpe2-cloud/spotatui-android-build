@@ -117,6 +117,22 @@ if ! dismiss_launcher_anr_dialog; then
   echo "Unable to dismiss emulator-only launcher dialog; refusing to accept a contaminated screenshot."
   exit 1
 fi
+
+if [ -s "$SYSTEM_WARNING_LOG" ]; then
+  # The headless emulator's Pixel Launcher can repeatedly raise its own ANR window
+  # while Spotty is healthy. Stop only that launcher process, then refocus Spotty.
+  # Spotty's own crash/ANR checks above and the full UI checks below remain strict.
+  echo "[smoke] Recovering from emulator-only Pixel Launcher ANR and refocusing Spotty."
+  timeout 15s adb shell am force-stop com.google.android.apps.nexuslauncher || true
+  timeout 30s adb shell am start -W -n com.spotty.music/.MainActivity
+  sleep 2
+  PID="$(timeout 20s adb shell pidof com.spotty.music | tr -d '\r' || true)"
+  if [ -z "$PID" ]; then
+    echo "Spotty process disappeared while recovering the emulator launcher."
+    exit 1
+  fi
+fi
+
 tap_ui_contains() {
   local target="$1" xml_path="$GITHUB_WORKSPACE/release-output/ui-tap-window.xml"
   local attempt=1 point="missing"
