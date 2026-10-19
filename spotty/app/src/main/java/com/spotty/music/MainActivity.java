@@ -765,11 +765,11 @@ public final class MainActivity extends Activity {
     }
 
     private void showBackgroundReliabilityDialog() {
-        String guidance = "Spotty keeps playback in a foreground media service and retries remote streams, but Android and phone manufacturers still control battery and background limits. For longer listening sessions:\\n\\n"
-                + "• Open App info → Battery and choose Unrestricted / No restrictions if your phone offers it.\\n"
-                + "• On Xiaomi / POCO HyperOS, enable Autostart and allow background activity where those options are available.\\n"
-                + "• Allow Spotty notifications and background data.\\n"
-                + "• Do not force-stop Spotty; force-stop deliberately terminates playback.\\n\\n"
+        String guidance = "Spotty keeps playback in a foreground media service and retries remote streams, but Android and phone manufacturers still control battery and background limits. For longer listening sessions:\n\n"
+                + "• Open App info → Battery and choose Unrestricted / No restrictions if your phone offers it.\n"
+                + "• On Xiaomi / POCO HyperOS, enable Autostart and allow background activity where those options are available.\n"
+                + "• Allow Spotty notifications and background data.\n"
+                + "• Do not force-stop Spotty; force-stop deliberately terminates playback.\n\n"
                 + "These settings improve resilience but cannot prevent interruptions from shutdown/reboot, lost connectivity, inaccessible tracks, provider outages, or system-enforced restrictions.";
         new AlertDialog.Builder(this)
                 .setTitle("Background playback reliability")
