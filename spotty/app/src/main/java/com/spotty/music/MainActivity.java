@@ -35,6 +35,7 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.provider.OpenableColumns;
+import android.provider.DocumentsContract;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -61,6 +62,7 @@ public final class MainActivity extends Activity {
     private int BG, PANEL, PANEL_ALT, TEXT, MUTED, ACCENT;
     private static final int REQUEST_PLAYLIST_FILE = 7234;
     private static final int REQUEST_LOCAL_AUDIO = 7235;
+    private static final int REQUEST_LOCAL_FOLDER = 7236;
     private static final String PREFS = "spotty_preferences";
     private static final String[] THEME_NAMES = {
             "Frutiger Aero", "Midwest Emo", "Synthwave", "Vaporwave",
@@ -575,6 +577,10 @@ public final class MainActivity extends Activity {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode == REQUEST_LOCAL_AUDIO) {
             if (resultCode == RESULT_OK && data != null) handleLocalAudioSelection(data);
+            return;
+        }
+        if (requestCode == REQUEST_LOCAL_FOLDER) {
+            if (resultCode == RESULT_OK && data != null) handleLocalFolderSelection(data);
             return;
         }
         if (requestCode != REQUEST_PLAYLIST_FILE || resultCode != RESULT_OK || data == null || data.getData() == null) return;
@@ -1092,6 +1098,291 @@ public final class MainActivity extends Activity {
             } catch (Exception noHandler) {
                 statusText.setText("No app can open YouTube links. Install Morphe YouTube or a browser.");
             }
+        }
+    }
+
+
+    private void registerPlaybackStateReceiver() {
+        playbackStateReceiver = new BroadcastReceiver() {
+            @Override public void onReceive(Context context, Intent intent) {
+                String state = intent.getStringExtra("state");
+                String message = intent.getStringExtra("message");
+                String title = intent.getStringExtra("title");
+                String artist = intent.getStringExtra("artist");
+                if (title != null && !title.isEmpty() && nowPlayingText != null) {
+                    nowPlayingText.setText(title + (artist == null || artist.isEmpty() ? "" : " — " + artist));
+                }
+                if ("playing".equals(state)) {
+                    preparing = false; paused = false;
+                    if (playPauseButton != null) playPauseButton.setText("Ⅱ");
+                    if (statusText != null) statusText.setText("Playing in background • " + (message == null ? "" : message));
+                } else if ("paused".equals(state)) {
+                    preparing = false; paused = true;
+                    if (playPauseButton != null) playPauseButton.setText("▶");
+                    if (statusText != null) statusText.setText(message == null ? "Paused" : message);
+                } else if ("connecting".equals(state)) {
+                    preparing = true;
+                    if (playPauseButton != null) playPauseButton.setText("…");
+                    if (statusText != null) statusText.setText(message == null ? "Connecting…" : message);
+                } else if ("error".equals(state)) {
+                    preparing = false; paused = false;
+                    if (playPauseButton != null) playPauseButton.setText("▶");
+                    if (statusText != null) statusText.setText("Playback issue • " + (message == null ? "try again" : message));
+                } else if ("completed".equals(state)) {
+                    preparing = false; paused = false;
+                    if (playPauseButton != null) playPauseButton.setText("▶");
+                    if (statusText != null) statusText.setText("Track finished");
+                    if (playbackQueue.size() > 1) main.postDelayed(() -> playNextTrack(), 300L);
+                } else if ("stopped".equals(state)) {
+                    preparing = false; paused = false;
+                    if (playPauseButton != null) playPauseButton.setText("▶");
+                }
+            }
+        };
+        IntentFilter filter = new IntentFilter(MusicPlaybackService.ACTION_STATE);
+        if (Build.VERSION.SDK_INT >= 33) registerReceiver(playbackStateReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+        else registerReceiver(playbackStateReceiver, filter);
+    }
+
+    private void requestNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT < 33) return;
+        if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) return;
+        SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
+        if (prefs.getBoolean("notification_permission_asked", false)) return;
+        prefs.edit().putBoolean("notification_permission_asked", true).apply();
+        requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 7404);
+    }
+
+    private void chooseLocalAudio() {
+        new AlertDialog.Builder(this)
+                .setTitle("Add local music")
+                .setItems(new String[]{"Choose audio files", "Import a folder (e.g. Soulseek downloads)"}, (dialog, which) -> {
+                    if (which == 0) chooseLocalAudioFiles();
+                    else chooseLocalAudioFolder();
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+    private void chooseLocalAudioFiles() {
+        try {
+            Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+            intent.addCategory(Intent.CATEGORY_OPENABLE);
+            intent.setType("audio/*");
+            intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+            startActivityForResult(intent, REQUEST_LOCAL_AUDIO);
+        } catch (Exception e) {
+            statusText.setText("Could not open the audio file picker.");
+        }
+    }
+
+    private void chooseLocalAudioFolder() {
+        try {
+            Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+            startActivityForResult(intent, REQUEST_LOCAL_FOLDER);
+        } catch (Exception e) {
+            statusText.setText("Folder access is not supported by this file provider. Choose audio files instead.");
+        }
+    }
+
+    private void loadLocalLibrary() {
+        resultHeading.setText("LOCAL AUDIO • FLAC / LOSSLESS");
+        showTracks(new ArrayList<>(localTracks), localTracks.isEmpty()
+                ? "Choose Add local audio / FLAC to play music already on your phone or in a Soulseek downloads folder."
+                : localTracks.size() + " local files • phone storage only");
+    }
+
+    private void handleLocalAudioSelection(Intent data) {
+        List<Uri> selected = new ArrayList<>();
+        if (data.getClipData() != null) {
+            for (int i = 0; i < data.getClipData().getItemCount(); i++) {
+                Uri uri = data.getClipData().getItemAt(i).getUri();
+                if (uri != null) selected.add(uri);
+            }
+        } else if (data.getData() != null) {
+            selected.add(data.getData());
+        }
+        int added = 0;
+        for (Uri uri : selected) {
+            try {
+                getContentResolver().takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            } catch (SecurityException | IllegalArgumentException ignored) {
+                // Some document providers grant access only for the current session.
+            }
+            String name = getDocumentDisplayName(uri);
+            if (!isSupportedAudioName(name)) {
+                statusText.setText("Skipped unsupported-looking file: " + name);
+                continue;
+            }
+            if (addLocalTrack(uri, name)) added++;
+        }
+        persistLocalTracks();
+        source = "local";
+        refreshSourceButtons(sourceRow);
+        showTracks(new ArrayList<>(localTracks), added + " files added • " + localTracks.size() + " local files saved");
+        resultHeading.setText("LOCAL AUDIO • FLAC / LOSSLESS");
+    }
+
+    private void handleLocalFolderSelection(Intent data) {
+        Uri treeUri = data.getData();
+        if (treeUri == null) return;
+        try {
+            getContentResolver().takePersistableUriPermission(treeUri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            Uri childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri,
+                    DocumentsContract.getTreeDocumentId(treeUri));
+            String[] columns = new String[]{DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                    DocumentsContract.Document.COLUMN_DISPLAY_NAME, DocumentsContract.Document.COLUMN_MIME_TYPE};
+            int added = 0;
+            try (Cursor cursor = getContentResolver().query(childrenUri, columns, null, null, null)) {
+                if (cursor != null) {
+                    int idCol = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DOCUMENT_ID);
+                    int nameCol = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DISPLAY_NAME);
+                    int mimeCol = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_MIME_TYPE);
+                    while (cursor.moveToNext() && added < 500) {
+                        String name = nameCol >= 0 ? cursor.getString(nameCol) : "";
+                        String mime = mimeCol >= 0 ? cursor.getString(mimeCol) : "";
+                        if (idCol < 0 || !isSupportedAudioName(name)
+                                || (!mime.startsWith("audio/") && mime.length() > 0 && !mime.equals("application/octet-stream"))) continue;
+                        String documentId = cursor.getString(idCol);
+                        Uri documentUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, documentId);
+                        if (addLocalTrack(documentUri, name)) added++;
+                    }
+                }
+            }
+            persistLocalTracks();
+            source = "local";
+            refreshSourceButtons(sourceRow);
+            showTracks(new ArrayList<>(localTracks), added + " audio files imported from folder • " + localTracks.size() + " total");
+            resultHeading.setText("LOCAL AUDIO • FLAC / LOSSLESS");
+        } catch (Exception e) {
+            showError("Could not read this folder: " + shortError(e) + ". Try selecting individual files.");
+        }
+    }
+
+    private String getDocumentDisplayName(Uri uri) {
+        String name = uri.getLastPathSegment();
+        try (Cursor cursor = getContentResolver().query(uri, null, null, null, null)) {
+            if (cursor != null && cursor.moveToFirst()) {
+                int index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+                if (index >= 0) name = cursor.getString(index);
+            }
+        } catch (Exception ignored) {}
+        return name == null || name.trim().isEmpty() ? "Local audio" : name.trim();
+    }
+
+    private boolean isSupportedAudioName(String name) {
+        if (name == null) return false;
+        String lower = name.toLowerCase(Locale.ROOT);
+        return lower.endsWith(".flac") || lower.endsWith(".wav") || lower.endsWith(".aiff")
+                || lower.endsWith(".alac") || lower.endsWith(".mp3") || lower.endsWith(".m4a")
+                || lower.endsWith(".aac") || lower.endsWith(".ogg") || lower.endsWith(".opus")
+                || lower.endsWith(".wma");
+    }
+
+    private boolean addLocalTrack(Uri uri, String name) {
+        for (Track existing : localTracks) if (existing.playUrl.equals(uri.toString())) return false;
+        String lower = name.toLowerCase(Locale.ROOT);
+        String format = lower.contains(".") ? lower.substring(lower.lastIndexOf('.') + 1).toUpperCase(Locale.ROOT) : "AUDIO";
+        localTracks.add(new Track(uri.toString(), name, "Local library",
+                "Local file • " + format, "local", uri.toString(), "", "user-selected local file"));
+        return true;
+    }
+
+    private void persistLocalTracks() {
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                .putString("local_tracks_json", serializeTrackList(localTracks)).apply();
+    }
+
+    private void loadSoundCloud(String query) {
+        resultHeading.setText("SOUNDCLOUD • OFFICIAL CATALOG");
+        resultsList.removeAllViews();
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(18), dp(18), dp(18), dp(18));
+        card.setBackground(panelCardDrawable());
+        card.addView(text("Find tracks on SoundCloud", 18, TEXT, true));
+        TextView detail = text("Search and stream in SoundCloud's official app or website. Spotty won't scrape private streams or bypass platform access controls.", 13, MUTED, false);
+        LinearLayout.LayoutParams detailLp = new LinearLayout.LayoutParams(-1, -2);
+        detailLp.topMargin = dp(10);
+        card.addView(detail, detailLp);
+        Button open = button("Open SoundCloud search ↗", ACCENT, BG);
+        open.setOnClickListener(v -> openSoundCloudSearch(query));
+        LinearLayout.LayoutParams openLp = new LinearLayout.LayoutParams(-1, dp(46));
+        openLp.topMargin = dp(15);
+        card.addView(open, openLp);
+        resultsList.addView(card, new LinearLayout.LayoutParams(-1, -2));
+        statusText.setText("Official SoundCloud handoff ready");
+    }
+
+    private void openSoundCloudSearch(String query) {
+        String q = query == null ? "" : query.trim();
+        final String address;
+        try { address = "https://soundcloud.com/search/sounds?q=" + enc(q.isEmpty() ? "music" : q); }
+        catch (Exception e) {
+            statusText.setText("Could not prepare SoundCloud search.");
+            return;
+        }
+        try {
+            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(address)).setPackage("com.soundcloud.android"));
+            statusText.setText("Opened SoundCloud app");
+        } catch (Exception appUnavailable) {
+            try {
+                startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(address)));
+                statusText.setText("Opened official SoundCloud search in the browser");
+            } catch (Exception noHandler) {
+                statusText.setText("No installed app or browser can open SoundCloud.");
+            }
+        }
+    }
+
+    private void loadDeezer(String query) {
+        resultHeading.setText(query == null || query.trim().isEmpty() ? "DEEZER PREVIEWS" : "DEEZER SEARCH");
+        String q = query == null ? "" : query.trim();
+        setLoading(q.isEmpty() ? "Loading Deezer previews…" : "Searching Deezer previews…");
+        io.execute(() -> {
+            try {
+                String endpoint = q.isEmpty()
+                        ? "https://api.deezer.com/chart/0/tracks?limit=30"
+                        : "https://api.deezer.com/search?q=" + enc(q) + "&limit=30";
+                JSONObject response = requestJsonObject(endpoint);
+                JSONArray data = response.optJSONArray("data");
+                if (data == null) throw new Exception("Deezer returned no track list.");
+                List<Track> found = new ArrayList<>();
+                for (int i = 0; i < data.length(); i++) {
+                    JSONObject item = data.optJSONObject(i);
+                    if (item == null) continue;
+                    String preview = item.optString("preview", "");
+                    if (preview.isEmpty()) continue;
+                    String id = item.optString("id", "");
+                    JSONObject artistObject = item.optJSONObject("artist");
+                    String artist = artistObject == null ? "Deezer artist" : artistObject.optString("name", "Deezer artist");
+                    JSONObject album = item.optJSONObject("album");
+                    String art = album == null ? "" : album.optString("cover_medium", "");
+                    String title = item.optString("title", "Untitled track");
+                    String link = item.optString("link", id.isEmpty() ? "https://www.deezer.com/" : "https://www.deezer.com/track/" + Uri.encode(id));
+                    found.add(new Track(id, title, artist, "Deezer • official preview (typically 30 seconds)",
+                            "deezer-preview", preview, art, link));
+                    if (found.size() >= 30) break;
+                }
+                main.post(() -> showTracks(found, found.isEmpty()
+                        ? "No preview-enabled results. Try another search or open Deezer directly."
+                        : found.size() + " official previews • full tracks open in Deezer"));
+            } catch (Exception e) {
+                main.post(() -> showError("Deezer API is unavailable: " + shortError(e) + " • You can still open Deezer directly."));
+            }
+        });
+    }
+
+    private void openDeezerTrack(Track track) {
+        String address = track.license.startsWith("https://") ? track.license
+                : "https://www.deezer.com/track/" + Uri.encode(track.id);
+        try {
+            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(address)).setPackage("deezer.android.app"));
+        } catch (Exception appUnavailable) {
+            try { startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(address))); }
+            catch (Exception noHandler) { statusText.setText("No app or browser can open Deezer."); }
         }
     }
 
