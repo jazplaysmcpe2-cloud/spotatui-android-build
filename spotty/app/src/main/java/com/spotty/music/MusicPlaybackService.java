@@ -34,10 +34,19 @@ public final class MusicPlaybackService extends Service {
     public static final String ACTION_STATE = "com.spotty.music.action.PLAYBACK_STATE";
     private static final String CHANNEL_ID = "spotty_playback";
     private static final int NOTIFICATION_ID = 7401;
-    private static final int MAX_RETRIES = 2;
+    private static final int MAX_RETRIES_PER_TRACK = 4;
+    private static final long RETRY_BASE_DELAY_MS = 1500L;
+    private static final long RETRY_MAX_DELAY_MS = 30000L;
     private static volatile MusicPlaybackService instance;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
+    private final Runnable retryRunnable = () -> {
+        retryScheduled = false;
+        if (instance == this && !currentUrl.isEmpty()
+                && getPreferences().getBoolean("playback_active", false)) {
+            prepareCurrentStream();
+        }
+    };
     private MediaPlayer mediaPlayer;
     private String currentUrl = "";
     private String currentTitle = "Spotty";
@@ -46,6 +55,7 @@ public final class MusicPlaybackService extends Service {
     private boolean preparing;
     private boolean resumeOnFocusGain;
     private int retryCount;
+    private boolean retryScheduled;
     private JSONArray playbackQueue = new JSONArray();
     private int queueIndex;
     private AudioManager audioManager;
@@ -87,6 +97,7 @@ public final class MusicPlaybackService extends Service {
                 resumeOnFocusGain = false;
                 try {
                     mediaPlayer.start();
+                    acquireWakeLock();
                     lastStatsTickElapsed = SystemClock.elapsedRealtime();
                     setState("playing", "Playing");
                 } catch (IllegalStateException ignored) { scheduleRetry("Audio focus returned"); }
@@ -229,13 +240,19 @@ public final class MusicPlaybackService extends Service {
             return START_STICKY;
         }
         if (ACTION_PLAY.equals(action)) {
+            handler.removeCallbacks(retryRunnable);
+            retryScheduled = false;
             accountAndFlushListeningTime();
             lastStatsTickElapsed = 0L;
             currentAlbum = "";
             currentGenre = "";
             currentPlaylist = "";
             currentSource = "";
-            currentUrl = intent.getStringExtra("url");
+            currentUrl = safe(intent.getStringExtra("url"), "");
+            if (currentUrl.isEmpty()) {
+                failAndStop("No playable audio URL was supplied");
+                return START_NOT_STICKY;
+            }
             currentTitle = safe(intent.getStringExtra("title"), "Untitled track");
             currentArtist = safe(intent.getStringExtra("artist"), "");
             trackPlayCounted = false;
@@ -334,6 +351,12 @@ public final class MusicPlaybackService extends Service {
     }
 
     private void prepareCurrentStream() {
+        handler.removeCallbacks(retryRunnable);
+        retryScheduled = false;
+        if (currentUrl == null || currentUrl.trim().isEmpty()) {
+            failAndStop("No playable audio URL is available");
+            return;
+        }
         releaseCurrentPlayer();
         preparing = true;
         resumeOnFocusGain = false;
@@ -347,6 +370,9 @@ public final class MusicPlaybackService extends Service {
         next.setOnPreparedListener(mp -> {
             if (mediaPlayer != mp) return;
             preparing = false;
+            retryCount = 0;
+            retryScheduled = false;
+            handler.removeCallbacks(retryRunnable);
             try {
                 mp.start();
                 acquireWakeLock();
@@ -425,18 +451,80 @@ public final class MusicPlaybackService extends Service {
     }
 
     private void scheduleRetry(String reason) {
+        // MediaPlayer may emit more than one error for a single failed connection.
+        // Keep only one pending retry and don't let a stale callback replace a new track.
+        if (retryScheduled || currentUrl == null || currentUrl.isEmpty()) return;
         accountAndFlushListeningTime();
         lastStatsTickElapsed = 0L;
         preparing = false;
         releaseCurrentPlayer();
         releaseWakeLock();
-        if (retryCount < MAX_RETRIES && !currentUrl.isEmpty()) {
-            retryCount++;
-            setState("connecting", reason + " • retry " + retryCount + "/" + MAX_RETRIES);
-            handler.postDelayed(this::prepareCurrentStream, retryCount == 1 ? 1200L : 3000L);
-        } else {
-            failAndStop(reason + " after retries");
+
+        // A broken item should not block an entire playlist forever. Give it several
+        // chances, then advance to another queued stream; a single remote/radio stream
+        // keeps reconnecting with bounded backoff until the listener stops it.
+        if (playbackQueue.length() > 1 && retryCount >= MAX_RETRIES_PER_TRACK
+                && advanceAfterRepeatedFailure(reason)) {
+            return;
         }
+
+        // Local document URIs won't heal when the file is permanently unreadable, so
+        // keep their retry budget bounded. Remote streams can recover after the network
+        // returns, so they remain alive and retry at intervals capped to 30 seconds.
+        boolean localUri = currentUrl.startsWith("content://") || currentUrl.startsWith("file://");
+        if (localUri && retryCount >= 3) {
+            failAndStop(reason + " • local file could not be opened");
+            return;
+        }
+
+        retryCount = Math.min(retryCount + 1, 1000);
+        int exponent = Math.min(Math.max(retryCount - 1, 0), 5);
+        long delayMs = Math.min(RETRY_BASE_DELAY_MS * (1L << exponent), RETRY_MAX_DELAY_MS);
+        retryScheduled = true;
+        setState("connecting", reason + " • retry " + retryCount
+                + " in " + Math.max(1L, delayMs / 1000L) + "s");
+        handler.removeCallbacks(retryRunnable);
+        handler.postDelayed(retryRunnable, delayMs);
+    }
+
+    private boolean advanceAfterRepeatedFailure(String reason) {
+        String failedUrl = currentUrl;
+        for (int offset = 1; offset < playbackQueue.length(); offset++) {
+            int candidateIndex = (queueIndex + offset) % playbackQueue.length();
+            JSONObject queued = playbackQueue.optJSONObject(candidateIndex);
+            if (queued == null) continue;
+            String candidateUrl = safe(queued.optString("url", ""), "");
+            if (candidateUrl.isEmpty() || candidateUrl.equals(failedUrl)) continue;
+
+            queueIndex = candidateIndex;
+            currentUrl = candidateUrl;
+            currentTitle = safe(queued.optString("title", ""), "Untitled track");
+            currentArtist = safe(queued.optString("artist", ""), "");
+            currentAlbum = safe(queued.optString("album", ""), "");
+            currentGenre = safe(queued.optString("genre", ""), "");
+            currentPlaylist = safe(queued.optString("playlist", ""), "");
+            currentSource = safe(queued.optString("provider", ""), inferSource(currentUrl));
+            trackPlayCounted = false;
+            retryCount = 0;
+            getPreferences().edit()
+                    .putString("last_url", currentUrl)
+                    .putString("last_title", currentTitle)
+                    .putString("last_artist", currentArtist)
+                    .putString("last_album", currentAlbum)
+                    .putString("last_genre", currentGenre)
+                    .putString("last_playlist", currentPlaylist)
+                    .putString("last_source", currentSource)
+                    .putString("queue_json", playbackQueue.toString())
+                    .putInt("queue_index", queueIndex)
+                    .putBoolean("playback_active", true)
+                    .apply();
+            retryScheduled = true;
+            setState("connecting", "Skipping unavailable track • " + reason);
+            handler.removeCallbacks(retryRunnable);
+            handler.postDelayed(retryRunnable, 300L);
+            return true;
+        }
+        return false;
     }
 
     private void togglePlayback() {
@@ -555,6 +643,8 @@ public final class MusicPlaybackService extends Service {
     }
 
     private void failAndStop(String message) {
+        handler.removeCallbacks(retryRunnable);
+        retryScheduled = false;
         accountAndFlushListeningTime();
         lastStatsTickElapsed = 0L;
         preparing = false;
@@ -568,6 +658,8 @@ public final class MusicPlaybackService extends Service {
     }
 
     private void stopPlaybackAndSelf() {
+        handler.removeCallbacks(retryRunnable);
+        retryScheduled = false;
         accountAndFlushListeningTime();
         lastStatsTickElapsed = 0L;
         handler.removeCallbacksAndMessages(null);
