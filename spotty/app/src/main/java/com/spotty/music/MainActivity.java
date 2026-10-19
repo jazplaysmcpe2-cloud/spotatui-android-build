@@ -14,6 +14,7 @@ import android.os.Environment;
 import android.os.Looper;
 import android.view.Gravity;
 import android.view.View;
+import android.view.WindowInsets;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
 import android.content.Context;
@@ -110,6 +111,14 @@ public final class MainActivity extends Activity {
         screen.setOrientation(LinearLayout.VERTICAL);
         screen.setBackgroundColor(BG);
         screen.setPadding(dp(18), dp(10), dp(18), dp(8));
+        // Android 15+ enforces edge-to-edge for targetSdk 35. Apply system-bar insets so
+        // the clock/status icons and gesture navigation never overlap the app content.
+        screen.setOnApplyWindowInsetsListener((view, insets) -> {
+            int topInset = insets.getSystemWindowInsetTop();
+            int bottomInset = insets.getSystemWindowInsetBottom();
+            view.setPadding(dp(18), topInset + dp(10), dp(18), bottomInset + dp(8));
+            return insets;
+        });
 
         LinearLayout header = new LinearLayout(this);
         header.setGravity(Gravity.CENTER_VERTICAL);
