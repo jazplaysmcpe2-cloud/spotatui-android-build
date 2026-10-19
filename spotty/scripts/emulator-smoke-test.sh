@@ -141,6 +141,24 @@ grep -Fq "OPEN ARCHIVE" "$HOME_XML"
 grep -Fq "LOCAL / FLAC" "$HOME_XML"
 echo "[smoke] Unified-source filter rail labels verified."
 
+# Submit a real query and verify the result heading changes; then exercise a specific source filter.
+tap_ui_contains "Track, artist, mood, or a lyric"
+timeout 15s adb shell input text "Radiohead"
+timeout 15s adb shell input keyevent 66
+sleep 2
+timeout 20s adb shell uiautomator dump /sdcard/spotty-unified-search.xml >/dev/null 2>&1
+timeout 20s adb pull /sdcard/spotty-unified-search.xml "$GITHUB_WORKSPACE/release-output/spotty-unified-search.xml" >/dev/null
+grep -Fq "SEARCH RESULTS" "$GITHUB_WORKSPACE/release-output/spotty-unified-search.xml"
+tap_ui_contains "AUDIUS"
+sleep 1
+timeout 20s adb shell uiautomator dump /sdcard/spotty-source-filter.xml >/dev/null 2>&1
+timeout 20s adb pull /sdcard/spotty-source-filter.xml "$GITHUB_WORKSPACE/release-output/spotty-source-filter.xml" >/dev/null
+grep -Fq "AUDIUS SEARCH" "$GITHUB_WORKSPACE/release-output/spotty-source-filter.xml"
+tap_ui_contains "ALL SOURCES"
+sleep 1
+echo "[smoke] Search submit and source filtering both change the active result view."
+
+
 # Theme switching used to recreate the Activity while a parent dialog was still attached.
 # Exercise several visually distinct themes through the actual Settings UI, then restore default.
 tap_ui_contains() {
@@ -155,7 +173,7 @@ try: nodes = list(ET.parse(sys.argv[1]).getroot().iter("node"))
 except Exception: nodes = []
 target = sys.argv[2].casefold()
 for node in nodes:
-    value = node.attrib.get("text", "")
+    value = " ".join(node.attrib.get(k, "") for k in ("text", "hint", "content-desc"))
     if target in value.casefold():
         bounds = [int(n) for n in re.findall(r"\d+", node.attrib.get("bounds", ""))]
         if len(bounds) == 4:
