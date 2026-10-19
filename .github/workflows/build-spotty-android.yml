@@ -72,6 +72,9 @@ jobs:
           RELEASE_APK="spotty/app/build/outputs/apk/release/app-release-unsigned.apk"
           test -s "$DEBUG_APK"
           mkdir -p release-output
+          # Keep a debug-only APK for exercising real local audio playback in the emulator.
+          # The public release asset is still the separately signed, non-debuggable release variant.
+          cp "$DEBUG_APK" release-output/spotty-android-smoke.apk
 
           values=("$ANDROID_KEYSTORE_BASE64" "$ANDROID_KEYSTORE_PASSWORD" "$ANDROID_KEY_ALIAS" "$ANDROID_KEY_PASSWORD")
           present=0
