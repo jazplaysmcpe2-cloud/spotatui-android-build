@@ -1380,6 +1380,7 @@ public final class MainActivity extends Activity {
                 if (sourcesOk == 0 && !retryAttempt) {
                     String retrying = "No catalogue responded • retrying once…";
                     showTracks(finalTracks, retrying);
+                    appendExternalSearchShortcuts(q);
                     statusText.setText(retrying);
                     // Mobile/emulator networks can finish connecting just after launch. Retry once
                     // rather than leaving a fresh install stuck on an empty catalogue screen.
@@ -1393,9 +1394,51 @@ public final class MainActivity extends Activity {
                 String status = finalTracks.size() + " finds • " + sourcesOk + "/4 catalogues online";
                 if (sourcesOk == 0) status = "Catalogues unavailable • check connection and retry";
                 showTracks(finalTracks, status);
+                appendExternalSearchShortcuts(q);
                 if (sourcesOk == 0 && statusText != null) statusText.setText(status);
             });
         });
+    }
+
+    private void appendExternalSearchShortcuts(String query) {
+        if (resultsList == null) return;
+        final String q = query == null ? "" : query.trim();
+        TextView section = text("MORE PLACES TO LISTEN", 10, ACCENT, true);
+        section.setLetterSpacing(0.11f);
+        section.setPadding(dp(2), dp(18), dp(2), dp(8));
+        resultsList.addView(section, new LinearLayout.LayoutParams(-1, -2));
+        addHandoffCard(resultsList, "Spotify · Spotui",
+                "Spotify's catalogue and account playback stay inside Spotui; Spotty will not fake a connected Spotify session.",
+                "Open Spotui player ↗", this::openSpotui);
+        addHandoffCard(resultsList, "SoundCloud",
+                "Use SoundCloud's official app or web search for tracks that are not in the public catalogues above.",
+                "Search SoundCloud ↗", () -> openSoundCloudSearch(q.isEmpty() ? "music" : q));
+        addHandoffCard(resultsList, "YouTube Music · Morphe",
+                "Search and listen in your installed YouTube Music/Morphe app. Playback controls belong to that app.",
+                "Search Morphe Music ↗", () -> openYoutubeMusicSearch(q.isEmpty() ? "music" : q));
+    }
+
+    private void addHandoffCard(LinearLayout parent, String title, String detailText,
+            String actionLabel, Runnable action) {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(14), dp(13), dp(14), dp(13));
+        card.setBackground(panelCardDrawable());
+        TextView heading = text(title, 14, TEXT, true);
+        card.addView(heading);
+        TextView detail = text(detailText, 11, MUTED, false);
+        detail.setLineSpacing(dp(2), 1.04f);
+        LinearLayout.LayoutParams detailLp = new LinearLayout.LayoutParams(-1, -2);
+        detailLp.topMargin = dp(5);
+        card.addView(detail, detailLp);
+        Button open = button(actionLabel, ACCENT, BG);
+        open.setOnClickListener(v -> action.run());
+        LinearLayout.LayoutParams openLp = new LinearLayout.LayoutParams(-1, dp(42));
+        openLp.topMargin = dp(10);
+        card.addView(open, openLp);
+        LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(-1, -2);
+        cardLp.bottomMargin = dp(8);
+        parent.addView(card, cardLp);
     }
 
     private int playbackRank(Track track) {
