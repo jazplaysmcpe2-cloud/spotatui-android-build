@@ -309,24 +309,63 @@ public final class MainActivity extends Activity {
 
         HorizontalScrollView genreScroll = new HorizontalScrollView(this);
         genreScroll.setHorizontalScrollBarEnabled(false);
+        genreScroll.setClipToPadding(false);
         LinearLayout genres = new LinearLayout(this);
         genres.setOrientation(LinearLayout.HORIZONTAL);
-        String[] moods = {"shoegaze", "dream pop", "post-rock", "ambient", "indie", "night drive", "slowcore"};
-        for (String mood : moods) {
-            TextView chip = text(mood, 11, TEXT, true);
-            chip.setPadding(dp(13), dp(9), dp(13), dp(9));
-            chip.setBackground(roundRect(PANEL_ALT, 17));
-            LinearLayout.LayoutParams chipLp = new LinearLayout.LayoutParams(-2, -2);
-            chipLp.rightMargin = dp(7);
-            chip.setOnClickListener(v -> {
-                searchField.setText(mood);
+        String[][] mixtapes = {
+                {"01 / AFTER DARK", "Shoegaze · slowcore", "shoegaze slowcore", "☾"},
+                {"02 / SOFT FOCUS", "Dream pop · ambient", "dream pop ambient", "◌"},
+                {"03 / GUITAR WEATHER", "Post-rock · emo", "post-rock emo", "✳"},
+                {"04 / STATIC BLOOM", "Indie · alternative", "indie alternative rock", "⌁"},
+                {"05 / SLOW MOTION", "Bedroom pop · slowcore", "bedroom pop slowcore", "✦"}
+        };
+        for (int i = 0; i < mixtapes.length; i++) {
+            final String searchMix = mixtapes[i][2];
+            int shift = i % 3;
+            int mixStart = blendColor(BG, ACCENT, 0.19f + shift * 0.09f);
+            int mixEnd = blendColor(PANEL_ALT, ACCENT, 0.10f + ((i + 1) % 3) * 0.08f);
+            FrameLayout tile = new FrameLayout(this);
+            GradientDrawable tileSurface = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
+                    new int[]{mixStart, mixEnd});
+            tileSurface.setCornerRadius(dp(20));
+            tileSurface.setStroke(dp(1), blendColor(TEXT, ACCENT, 0.28f));
+            tile.setBackground(tileSurface);
+            tile.setClipToOutline(true);
+            tile.setElevation(dp(2));
+
+            LinearLayout tileCopy = new LinearLayout(this);
+            tileCopy.setOrientation(LinearLayout.VERTICAL);
+            tileCopy.setPadding(dp(13), dp(12), dp(13), dp(10));
+            TextView tileNumber = text(mixtapes[i][0], 8, ACCENT, true);
+            tileNumber.setLetterSpacing(0.07f);
+            TextView tileTitle = text(mixtapes[i][1], 13, TEXT, true);
+            tileTitle.setMaxLines(2);
+            LinearLayout.LayoutParams tileTitleLp = new LinearLayout.LayoutParams(-1, -2);
+            tileTitleLp.topMargin = dp(7);
+            tileCopy.addView(tileNumber);
+            tileCopy.addView(tileTitle, tileTitleLp);
+            tile.addView(tileCopy, new FrameLayout.LayoutParams(-1, -1));
+
+            TextView motif = text(mixtapes[i][3], 43, blendColor(TEXT, ACCENT, 0.35f), true);
+            motif.setAlpha(0.32f);
+            motif.setGravity(Gravity.CENTER);
+            FrameLayout.LayoutParams motifLp = new FrameLayout.LayoutParams(dp(62), dp(62), Gravity.END | Gravity.BOTTOM);
+            motifLp.rightMargin = dp(1);
+            motifLp.bottomMargin = dp(-2);
+            tile.addView(motif, motifLp);
+
+            LinearLayout.LayoutParams tileLp = new LinearLayout.LayoutParams(dp(184), dp(96));
+            tileLp.rightMargin = dp(9);
+            tile.setOnClickListener(v -> {
+                searchField.setText(searchMix);
                 source = "all";
-                loadAllSources(mood);
+                refreshSourceButtons(sourceRow);
+                loadAllSources(searchMix);
             });
-            genres.addView(chip, chipLp);
+            genres.addView(tile, tileLp);
         }
         genreScroll.addView(genres);
-        LinearLayout.LayoutParams genreLp = new LinearLayout.LayoutParams(-1, -2);
+        LinearLayout.LayoutParams genreLp = new LinearLayout.LayoutParams(-1, dp(104));
         genreLp.topMargin = dp(10);
         screen.addView(genreScroll, genreLp);
 
@@ -3255,13 +3294,8 @@ public final class MainActivity extends Activity {
             playbackQueueIndex = MusicPlaybackService.hasTrack() ? 0 : -1;
             persistUiQueue();
         }
-        if (playbackQueue.isEmpty() && !visibleTracks.isEmpty()) {
-            playbackQueue.addAll(visibleTracks);
-            playbackQueueIndex = -1;
-            persistUiQueue();
-        }
-        if (playbackQueue.isEmpty()) {
-            Toast.makeText(this, "Add a track from Discover to start your queue.", Toast.LENGTH_SHORT).show();
+        if (playbackQueue.isEmpty() && visibleTracks.isEmpty() && currentTrack == null) {
+            Toast.makeText(this, "Find a song or import local audio, then add it to your queue.", Toast.LENGTH_SHORT).show();
             return;
         }
         Dialog dialog = new Dialog(this);
@@ -3555,6 +3589,7 @@ public final class MainActivity extends Activity {
 
     private void setLoading(String message) {
         statusText.setText(message);
+        visibleTracks.clear();
         resultsList.removeAllViews();
         TextView progress = text(message, 14, MUTED, false);
         progress.setPadding(dp(8), dp(18), dp(8), dp(18));
