@@ -2263,20 +2263,88 @@ public final class MainActivity extends Activity {
     }
 
     private void showLibraryDialog() {
-        String[] options = {"Liked tracks", "Local audio / FLAC", "Imported playlist", "Import playlist"};
-        new AlertDialog.Builder(this).setTitle("Your library").setItems(options, (dialog, which) -> {
-            if (which == 0) {
-                source = "liked";
-                resultHeading.setText("YOUR LIKED MUSIC");
-                loadCurrentSource("");
-            } else if (which == 1) {
-                source = "local";
-                loadLocalLibrary();
-            } else if (which == 2) {
-                source = "playlist";
-                loadCurrentSource("");
-            } else showPlaylistImportDialog();
-        }).setNegativeButton("Done", null).show();
+        Dialog dialog = new Dialog(this);
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setBackgroundColor(BG);
+        root.setPadding(dp(20), dp(16), dp(20), dp(18));
+
+        LinearLayout heading = new LinearLayout(this);
+        heading.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout titleBlock = new LinearLayout(this);
+        titleBlock.setOrientation(LinearLayout.VERTICAL);
+        TextView kicker = text("SAVED, LOCAL & SIDE CHANNELS", 9, ACCENT, true);
+        kicker.setLetterSpacing(0.12f);
+        TextView title = text("Your library", 25, TEXT, true);
+        titleBlock.addView(kicker);
+        LinearLayout.LayoutParams titleLp = new LinearLayout.LayoutParams(-1, -2);
+        titleLp.topMargin = dp(4);
+        titleBlock.addView(title, titleLp);
+        heading.addView(titleBlock, new LinearLayout.LayoutParams(0, -2, 1));
+        TextView close = text("×", 27, TEXT, true);
+        close.setGravity(Gravity.CENTER);
+        close.setBackground(roundRect(PANEL, 50));
+        heading.addView(close, new LinearLayout.LayoutParams(dp(42), dp(42)));
+        close.setOnClickListener(v -> dialog.dismiss());
+        root.addView(heading);
+
+        ScrollView scroller = new ScrollView(this);
+        scroller.setVerticalScrollBarEnabled(false);
+        LinearLayout rows = new LinearLayout(this);
+        rows.setOrientation(LinearLayout.VERTICAL);
+        scroller.addView(rows);
+        LinearLayout.LayoutParams scrollLp = new LinearLayout.LayoutParams(-1, 0, 1);
+        scrollLp.topMargin = dp(16);
+        root.addView(scroller, scrollLp);
+
+        addSettingsRow(rows, "♡", "Liked tracks", favoriteTracks.size() + " saved on this device", () -> {
+            dialog.dismiss();
+            source = "liked";
+            loadCurrentSource("");
+        });
+        addSettingsRow(rows, "▤", "Local audio & FLAC", localTracks.size() + " local files · original file quality", () -> {
+            dialog.dismiss();
+            source = "local";
+            loadLocalLibrary();
+        });
+        addSettingsRow(rows, "♫", "Imported playlist", importedPlaylistName + " · " + playlistTracks.size() + " tracks", () -> {
+            dialog.dismiss();
+            source = "playlist";
+            loadCurrentSource("");
+        });
+        addSettingsRow(rows, "＋", "Import playlist", "CSV, M3U or exported track lists", () -> {
+            dialog.dismiss();
+            showPlaylistImportDialog();
+        });
+        addSettingsRow(rows, "◌", "Internet radio", "Stations are separate from song search", () -> {
+            dialog.dismiss();
+            source = "radio";
+            loadRadio(searchField == null ? "" : searchField.getText().toString().trim());
+        });
+        addSettingsRow(rows, "⇣", "Soulseek / FLAC folder", "Open Seeker or import files you have rights to", () -> {
+            dialog.dismiss();
+            loadSoulseekSource();
+        });
+        addSettingsRow(rows, "↗", "SoundCloud", "Open the official app/site; in-app stream access is not configured", () -> {
+            dialog.dismiss();
+            openSoundCloudSearch(searchField == null ? "" : searchField.getText().toString().trim());
+        });
+
+        TextView foot = text("Your saved tracks stay on this phone. Public catalogues are discovered separately.", 10, MUTED, false);
+        foot.setGravity(Gravity.CENTER);
+        foot.setPadding(dp(4), dp(10), dp(4), dp(4));
+        root.addView(foot);
+        dialog.setContentView(root);
+        dialog.setCancelable(true);
+        dialog.show();
+        Window window = dialog.getWindow();
+        if (window != null) {
+            window.setBackgroundDrawable(new ColorDrawable(BG));
+            window.setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT);
+            window.setStatusBarColor(BG);
+            window.setNavigationBarColor(BG);
+            window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
+        }
     }
 
     private void addSettingsRow(LinearLayout parent, String symbol, String titleText, String detailText, Runnable action) {
