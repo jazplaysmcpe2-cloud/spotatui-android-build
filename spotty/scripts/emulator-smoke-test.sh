@@ -229,8 +229,8 @@ fi
 echo "[smoke] Discovery heading, unified search field, and absence of the old provider row verified."
 # Only the first chip is required in the initial viewport. Verify the remaining labels
 # after scrolling the real rail rather than assuming off-screen views are accessible.
-grep -Fq "ALL SOURCES" "$HOME_XML"
-echo "[smoke] Initial source-rail viewport verified."
+ensure_rail_label_visible "ALL SOURCES"
+echo "[smoke] Initial source-rail label verified by viewport-aware scrolling."
 for rail_label in "AUDIUS" "OPEN ARCHIVE" "DEEZER PREVIEWS" "YOUTUBE" "SOUNDCLOUD" "SPOTIFY / SPOTUI" "SOULSEEK" "LOCAL / FLAC" "RADIO"; do
   ensure_rail_label_visible "$rail_label"
 done
