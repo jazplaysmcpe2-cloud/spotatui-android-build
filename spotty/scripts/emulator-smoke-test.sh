@@ -139,7 +139,11 @@ grep -Fq "ALL SOURCES" "$HOME_XML"
 grep -Fq "AUDIUS" "$HOME_XML"
 grep -Fq "OPEN ARCHIVE" "$HOME_XML"
 grep -Fq "LOCAL / FLAC" "$HOME_XML"
-echo "[smoke] Unified-source filter rail labels verified."
+grep -Fq "DEEZER PREVIEWS" "$HOME_XML"
+grep -Fq "SOUNDCLOUD" "$HOME_XML"
+grep -Fq "SPOTIFY / SPOTUI" "$HOME_XML"
+grep -Fq "SOULSEEK" "$HOME_XML"
+echo "[smoke] Unified-source and explicit provider/handoff rail labels verified."
 
 # Submit a real query and verify the result heading changes; then exercise a specific source filter.
 tap_ui_contains "Track, artist, mood, or a lyric"
@@ -154,9 +158,15 @@ sleep 1
 timeout 20s adb shell uiautomator dump /sdcard/spotty-source-filter.xml >/dev/null 2>&1
 timeout 20s adb pull /sdcard/spotty-source-filter.xml "$GITHUB_WORKSPACE/release-output/spotty-source-filter.xml" >/dev/null
 grep -Fq "AUDIUS SEARCH" "$GITHUB_WORKSPACE/release-output/spotty-source-filter.xml"
+tap_ui_contains "SPOTIFY / SPOTUI"
+sleep 1
+timeout 20s adb shell uiautomator dump /sdcard/spotty-spotui-handoff.xml >/dev/null 2>&1
+timeout 20s adb pull /sdcard/spotty-spotui-handoff.xml "$GITHUB_WORKSPACE/release-output/spotty-spotui-handoff.xml" >/dev/null
+grep -Fq "SPOTIFY • SPOTUI HANDOFF" "$GITHUB_WORKSPACE/release-output/spotty-spotui-handoff.xml"
+grep -Fq "Open Spotui player" "$GITHUB_WORKSPACE/release-output/spotty-spotui-handoff.xml"
 tap_ui_contains "ALL SOURCES"
 sleep 1
-echo "[smoke] Search submit and source filtering both change the active result view."
+echo "[smoke] Search submit, source filtering, and the explicit Spotui handoff view work."
 
 
 # Theme switching used to recreate the Activity while a parent dialog was still attached.
