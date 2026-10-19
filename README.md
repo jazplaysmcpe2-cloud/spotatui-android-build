@@ -1,24 +1,24 @@
-# Spotatui Android build
+# Spotty Android app and legacy Spotatui build
 
-This repository builds an Android port from the official LargeModGames/spotatui source. The upstream desktop builds are not Android APKs, so this workflow rebuilds the mobile app and Rust core for Android.
+This repository contains a standalone Android project named **Spotty** in `spotty/`. Spotty has its own Android app ID (`com.spotty.music`) and does not use Spotatui, Spotify Connect, or Spotify Premium.
 
-## Updates
+## Spotty
 
-The Android app checks this repository's latest release from Settings → App updates. A signed release publishes spotatui-android-release.apk plus a SHA-256 checksum and source revision. Android will still ask the user to confirm installing a downloaded APK; ordinary sideloaded apps cannot silently self-install an update.
+Spotty searches YouTube through documented public Invidious API instances, then opens selected YouTube links in Morphe YouTube when installed. It also offers Audius, licensed/public-domain Internet Archive audio, and free internet radio. YouTube playback is delegated to Morphe/the phone's default YouTube handler; Spotty does not extract YouTube streams.
 
-The updater is deliberately separate from the desktop app's built-in updater. APK updates must use the same Android application ID and the same signing certificate as the installed build.
+Build and behavior notes are in [spotty/README.md](spotty/README.md). The `Build Spotty Android APK` workflow builds, verifies, and smoke-tests the standalone app and publishes a release after a successful build on `main`.
 
-## One-time signing configuration
+## Legacy Spotatui builder
 
-To publish updateable APK releases, configure these repository Actions secrets before expecting an update to appear:
+The existing root-level workflow `.github/workflows/build-spotatui-android.yml` remains for the prior Spotatui Android experiment. It is separate from Spotty. The Spotatui APK still inherits Spotatui's service/account limitations; use Spotty for the independent no-Spotify-Premium project.
 
-- ANDROID_KEYSTORE_BASE64: the release keystore encoded as one Base64 line.
-- ANDROID_KEYSTORE_PASSWORD: the keystore password.
-- ANDROID_KEY_ALIAS: the private-key alias.
-- ANDROID_KEY_PASSWORD: the private-key password.
+## Signing
 
-Generate and store the signing keystore privately. Do not commit the keystore or its passwords to this public repository. Preserve the keystore safely; future APKs must be signed with the same key to install over previous releases. The workflow can still build and run emulator smoke tests without these secrets, but it will not publish a public update release.
+The Spotty workflow can use these repository Actions secrets to sign releases with a persistent key:
 
-## CI
+- `ANDROID_KEYSTORE_BASE64`
+- `ANDROID_KEYSTORE_PASSWORD`
+- `ANDROID_KEY_ALIAS`
+- `ANDROID_KEY_PASSWORD`
 
-The workflow tracks the official repository's main commit and checks it daily. Scheduled builds are skipped when the upstream source revision has already passed the emulator smoke test. Pushes to the build scripts and manual workflow runs force a rebuild. Each successful run records its tested upstream revision.
+Never commit a signing keystore or passwords. If the secrets are not configured, the workflow falls back to the Android debug signing key; that build is installable but later builds may need a reinstall.

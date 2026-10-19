@@ -1,0 +1,203 @@
+name: Build Spotty Android APK
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'spotty/**'
+      - '.github/workflows/build-spotty-android.yml'
+  pull_request:
+    paths:
+      - 'spotty/**'
+      - '.github/workflows/build-spotty-android.yml'
+  workflow_dispatch:
+  schedule:
+    - cron: '23 7 1 * *' # Monthly build, smoke test and release from main
+
+permissions:
+  contents: write
+
+concurrency:
+  # A retry of an older commit must never cancel a newer build on the same branch.
+  group: spotty-android-${{ github.ref }}-${{ github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out Spotty
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install current Android platform and build tools
+        run: |
+          set -euo pipefail
+          export ANDROID_HOME="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager 2>/dev/null | sort -V | tail -n 1)"
+          if [[ -z "$SDKMANAGER" ]]; then
+            echo "::error::Could not locate sdkmanager under $ANDROID_HOME/cmdline-tools."
+            find "$ANDROID_HOME" -maxdepth 4 -type f -name sdkmanager -print || true
+            exit 1
+          fi
+          echo "$(dirname "$SDKMANAGER")" >> "$GITHUB_PATH"
+          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" "platform-tools" "platforms;android-35" "build-tools;35.0.0" "emulator"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+
+      - name: Compile and package Spotty
+        working-directory: spotty
+        run: gradle --no-daemon --stacktrace :app:assembleDebug :app:assembleRelease
+
+      - name: Sign with the persistent release key when configured
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          DEBUG_APK="spotty/app/build/outputs/apk/debug/app-debug.apk"
+          RELEASE_APK="spotty/app/build/outputs/apk/release/app-release-unsigned.apk"
+          test -s "$DEBUG_APK"
+          mkdir -p release-output
+          # Keep a debug-only APK for exercising real local audio playback in the emulator.
+          # The public release asset is still the separately signed, non-debuggable release variant.
+          cp "$DEBUG_APK" release-output/spotty-android-smoke.apk
+
+          values=("$ANDROID_KEYSTORE_BASE64" "$ANDROID_KEYSTORE_PASSWORD" "$ANDROID_KEY_ALIAS" "$ANDROID_KEY_PASSWORD")
+          present=0
+          for value in "${values[@]}"; do
+            [[ -n "$value" ]] && present=$((present + 1))
+          done
+
+          if [[ "$present" -eq 4 ]]; then
+            test -s "$RELEASE_APK"
+            cp "$RELEASE_APK" release-output/spotty-android-release.apk
+            KEYSTORE="$RUNNER_TEMP/spotty-android-release.jks"
+            printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE"
+            test -s "$KEYSTORE"
+            "$ANDROID_HOME/build-tools/35.0.0/apksigner" sign \
+              --ks "$KEYSTORE" \
+              --ks-key-alias "$ANDROID_KEY_ALIAS" \
+              --ks-pass env:ANDROID_KEYSTORE_PASSWORD \
+              --key-pass env:ANDROID_KEY_PASSWORD \
+              --out "$RUNNER_TEMP/spotty-android-release-signed.apk" \
+              release-output/spotty-android-release.apk
+            mv "$RUNNER_TEMP/spotty-android-release-signed.apk" release-output/spotty-android-release.apk
+            echo "APK signed with the configured persistent release key."
+            PERSISTENT_SIGNING=true
+            echo "PERSISTENT_SIGNING=true" >> "$GITHUB_ENV"
+          elif [[ "$present" -eq 0 ]]; then
+            if [[ "$GITHUB_REF" == "refs/heads/main" && "$GITHUB_EVENT_NAME" != "pull_request" ]]; then
+              echo "::error::Refusing to publish a public APK without the persistent signing key. Configure all four ANDROID_* repository secrets first."
+              exit 1
+            fi
+            cp "$DEBUG_APK" release-output/spotty-android-release.apk
+            echo "::warning::Signing secrets absent on a pull-request build; using the debug-signed APK for CI smoke testing only."
+            PERSISTENT_SIGNING=false
+            echo "PERSISTENT_SIGNING=false" >> "$GITHUB_ENV"
+          else
+            echo "::error::Only some Android signing secrets are set. Configure all four or clear all four."
+            exit 1
+          fi
+
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose release-output/spotty-android-release.apk
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging release-output/spotty-android-release.apk | tee release-output/apk-badging.txt
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump permissions release-output/spotty-android-release.apk | tee release-output/apk-permissions.txt
+          grep -Fq "package: name='com.spotty.music'" release-output/apk-badging.txt
+          grep -Fq "android.permission.INTERNET" release-output/apk-permissions.txt
+          grep -Fq "android.permission.FOREGROUND_SERVICE" release-output/apk-permissions.txt
+          grep -Fq "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" release-output/apk-permissions.txt
+          grep -Fq "android.permission.WAKE_LOCK" release-output/apk-permissions.txt
+          if [[ "$PERSISTENT_SIGNING" == "true" ]] && grep -Fq "application-debuggable" release-output/apk-badging.txt; then
+            echo "::error::Public release artifact is debuggable; refusing publication."
+            exit 1
+          fi
+          sha256sum release-output/spotty-android-release.apk | tee release-output/SHA256SUMS.txt
+          echo "APK signature, package ID, and Internet permission checks passed."
+
+      - name: Enable and verify hardware acceleration for the Android emulator
+        run: |
+          set -euo pipefail
+          if [ ! -e /dev/kvm ]; then
+            echo "::error::This runner does not expose /dev/kvm; the emulator smoke test cannot run safely."
+            exit 1
+          fi
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sudo chmod 0666 /dev/kvm
+          test -r /dev/kvm
+          test -w /dev/kvm
+          "$ANDROID_HOME/emulator/emulator" -accel-check
+
+      - name: Smoke-test APK installability in Android emulator
+        uses: ReactiveCircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          cores: 2
+          ram-size: 3072M
+          emulator-boot-timeout: 600
+          emulator-options: -no-window -gpu swiftshader -no-snapshot -noaudio -no-boot-anim
+          disable-linux-hw-accel: false
+          disable-animations: true
+          script: |
+            bash "$GITHUB_WORKSPACE/spotty/scripts/emulator-smoke-test.sh"
+
+      - name: Upload built and tested Spotty APK
+        if: always() && hashFiles('release-output/spotty-android-release.apk') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: spotty-android-apk-${{ github.run_number }}
+          path: release-output/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish Spotty release
+        if: success() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="spotty-android-$GITHUB_RUN_NUMBER-$GITHUB_RUN_ATTEMPT"
+          if [[ "$PERSISTENT_SIGNING" == "true" ]]; then
+            SIGN_NOTE="Signed with the repository's persistent Android release key; later releases can update this install."
+          else
+            SIGN_NOTE="This build uses temporary debug signing. Installing a later build may require uninstalling the previous Spotty APK first."
+          fi
+          cat > release-output/release-notes.md <<EOF
+          Spotty is a standalone Android music/video discovery app. It does not require Spotify or Spotify Premium.
+
+          - YouTube catalog search uses public Invidious instances; selecting a result opens the YouTube link in Morphe YouTube when installed.
+          - Imports playlists from CSV, M3U, or pasted title/artist lists; Spotify link alone cannot reveal protected playlist items.
+          - Includes source-aware quality selection, licensed Internet Archive downloads, Audius, free internet radio, official Deezer previews, SoundCloud handoff and local audio/FLAC folder imports.
+          - Playback runs in an Android media foreground service with notification controls, audio focus, wake-lock handling and bounded reconnect retries.
+          - Package: com.spotty.music
+          - Minimum Android: 8.0 (API 26)
+          - Emulator smoke test: passed in this workflow.
+
+          $SIGN_NOTE
+
+          This is not Spotify and does not unlock Spotify's catalog.
+          EOF
+          gh release create "$TAG" \
+            release-output/spotty-android-release.apk \
+            release-output/SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Spotty Android 0.1.0 (build $GITHUB_RUN_NUMBER)" \
+            --notes-file release-output/release-notes.md
