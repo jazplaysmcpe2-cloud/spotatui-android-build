@@ -4188,16 +4188,42 @@ public final class MainActivity extends Activity {
     }
 
     private void shuffleUpcomingTracks() {
-        if (playbackQueue.size() < 2) return;
         int start = (MusicPlaybackService.hasTrack() && playbackQueueIndex >= 0)
                 ? playbackQueueIndex + 1 : Math.max(0, playbackQueueIndex);
-        if (start >= playbackQueue.size() - 1) return;
+        start = Math.min(start, playbackQueue.size());
         List<Track> upcoming = new ArrayList<>(playbackQueue.subList(start, playbackQueue.size()));
-        Collections.shuffle(upcoming);
+        Track anchor = playbackQueueIndex >= 0 && playbackQueueIndex < playbackQueue.size()
+                ? playbackQueue.get(playbackQueueIndex) : currentTrack;
+        if (anchor == null && !visibleTracks.isEmpty()) anchor = visibleTracks.get(0);
+
         if ("smart".equals(shuffleMode)) {
-            final Track anchor = playbackQueueIndex >= 0 && playbackQueueIndex < playbackQueue.size()
-                    ? playbackQueue.get(playbackQueueIndex) : (upcoming.isEmpty() ? null : upcoming.get(0));
-            if (anchor != null) upcoming.sort((a, b) -> Integer.compare(smartShuffleScore(b, anchor), smartShuffleScore(a, anchor)));
+            // Smart Shuffle extends a manually-built mix with similar playable tracks from the
+            // current catalogue results. It never fabricates a stream or re-adds queued URLs.
+            List<Track> suggestions = new ArrayList<>();
+            for (Track candidate : visibleTracks) {
+                if (candidate == null || candidate.playUrl.isEmpty() || needsExternalPlayback(candidate)) continue;
+                boolean alreadyQueued = false;
+                for (Track queued : playbackQueue) {
+                    if (sameTrack(queued, candidate)
+                            || (!candidate.playUrl.isEmpty() && candidate.playUrl.equals(queued.playUrl))) {
+                        alreadyQueued = true;
+                        break;
+                    }
+                }
+                if (!alreadyQueued) suggestions.add(candidate);
+            }
+            if (anchor != null) {
+                final Track reference = anchor;
+                suggestions.sort((a, b) -> Integer.compare(smartShuffleScore(b, reference), smartShuffleScore(a, reference)));
+                int maxSuggestions = Math.min(12, suggestions.size());
+                for (int i = 0; i < maxSuggestions; i++) upcoming.add(suggestions.get(i));
+            }
+        }
+
+        Collections.shuffle(upcoming);
+        if ("smart".equals(shuffleMode) && anchor != null) {
+            final Track reference = anchor;
+            upcoming.sort((a, b) -> Integer.compare(smartShuffleScore(b, reference), smartShuffleScore(a, reference)));
         }
         while (playbackQueue.size() > start) playbackQueue.remove(playbackQueue.size() - 1);
         playbackQueue.addAll(upcoming);
