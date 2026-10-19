@@ -158,12 +158,14 @@ sleep 1
 timeout 20s adb shell uiautomator dump /sdcard/spotty-source-filter.xml >/dev/null 2>&1
 timeout 20s adb pull /sdcard/spotty-source-filter.xml "$GITHUB_WORKSPACE/release-output/spotty-source-filter.xml" >/dev/null
 grep -Fq "AUDIUS SEARCH" "$GITHUB_WORKSPACE/release-output/spotty-source-filter.xml"
+scroll_source_rail right
 tap_ui_contains "SPOTIFY / SPOTUI"
 sleep 1
 timeout 20s adb shell uiautomator dump /sdcard/spotty-spotui-handoff.xml >/dev/null 2>&1
 timeout 20s adb pull /sdcard/spotty-spotui-handoff.xml "$GITHUB_WORKSPACE/release-output/spotty-spotui-handoff.xml" >/dev/null
 grep -Fq "SPOTIFY • SPOTUI HANDOFF" "$GITHUB_WORKSPACE/release-output/spotty-spotui-handoff.xml"
 grep -Fq "Open Spotui player" "$GITHUB_WORKSPACE/release-output/spotty-spotui-handoff.xml"
+scroll_source_rail left
 tap_ui_contains "ALL SOURCES"
 sleep 1
 echo "[smoke] Search submit, source filtering, and the explicit Spotui handoff view work."
@@ -205,6 +207,40 @@ PY
   cat "$xml_path" 2>/dev/null || true
   return 1
 }
+scroll_source_rail() {
+  local direction="$1" xml_path="$GITHUB_WORKSPACE/release-output/source-rail.xml"
+  timeout 20s adb shell uiautomator dump /sdcard/spotty-source-rail.xml >/dev/null 2>&1 || true
+  timeout 20s adb pull /sdcard/spotty-source-rail.xml "$xml_path" >/dev/null 2>&1 || true
+  local y screen_width start_x end_x
+  y="$(python3 - "$xml_path" <<'PY'
+import re, sys, xml.etree.ElementTree as ET
+try: nodes = list(ET.parse(sys.argv[1]).getroot().iter("node"))
+except Exception: nodes = []
+for node in nodes:
+    value = node.attrib.get("text", "").upper()
+    if any(label in value for label in ("ALL SOURCES", "AUDIUS", "OPEN ARCHIVE", "DEEZER PREVIEWS", "SOUNDCLOUD", "SPOTIFY / SPOTUI")):
+        bounds = [int(n) for n in re.findall(r"\d+", node.attrib.get("bounds", ""))]
+        if len(bounds) == 4:
+            print((bounds[1] + bounds[3]) // 2)
+            raise SystemExit(0)
+print(520)
+PY
+  )"
+  screen_width="$(timeout 10s adb shell wm size | sed -n 's/.*size: \([0-9]*\)x.*/\1/p' | tail -n 1)"
+  [[ "$screen_width" =~ ^[0-9]+$ ]] || screen_width=1080
+  if [[ "$direction" == "right" ]]; then
+    start_x=$((screen_width * 86 / 100)); end_x=$((screen_width * 14 / 100))
+  else
+    start_x=$((screen_width * 14 / 100)); end_x=$((screen_width * 86 / 100))
+  fi
+  timeout 15s adb shell input swipe "$start_x" "$y" "$end_x" "$y" 350
+  sleep 1
+  timeout 15s adb shell input swipe "$start_x" "$y" "$end_x" "$y" 350
+  sleep 1
+  timeout 15s adb shell input swipe "$start_x" "$y" "$end_x" "$y" 350
+  sleep 1
+}
+
 for theme in "Y2K Glass" "Midwest Emo" "Retro CRT" "Synthwave" "Frutiger Aero"; do
   echo "[smoke] Switching theme through Settings: $theme"
   tap_ui_contains "SETTINGS"
