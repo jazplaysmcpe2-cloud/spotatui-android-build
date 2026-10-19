@@ -11,6 +11,15 @@ import android.app.AlertDialog;
 import android.app.Dialog;
 import android.app.DownloadManager;
 import android.graphics.Color;
+import android.graphics.Canvas;
+import android.graphics.ColorFilter;
+import android.graphics.LinearGradient;
+import android.graphics.Paint;
+import android.graphics.PixelFormat;
+import android.graphics.RadialGradient;
+import android.graphics.Rect;
+import android.graphics.Shader;
+import android.graphics.drawable.Drawable;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.drawable.ColorDrawable;
@@ -114,6 +123,8 @@ public final class MainActivity extends Activity {
     private String activeTheme = "Frutiger Aero";
     private String activeQuality = "Best available";
     private Dialog playerDialog;
+    private Dialog settingsDialog;
+    private Dialog themeDialog;
     private Track activePlayerSelection;
     private ImageView miniArtwork;
     private ImageView playerArtwork;
@@ -177,7 +188,7 @@ public final class MainActivity extends Activity {
     private void buildUi() {
         LinearLayout screen = new LinearLayout(this);
         screen.setOrientation(LinearLayout.VERTICAL);
-        screen.setBackgroundColor(BG);
+        screen.setBackground(createThemeBackdrop());
         screen.setPadding(dp(18), dp(8), dp(18), dp(7));
         screen.setOnApplyWindowInsetsListener((view, insets) -> {
             view.setPadding(dp(18), insets.getSystemWindowInsetTop() + dp(8),
@@ -291,6 +302,22 @@ public final class MainActivity extends Activity {
         genreLp.topMargin = dp(10);
         screen.addView(genreScroll, genreLp);
 
+        // "All sources" merges the supported public catalogues; these chips are real filters.
+        HorizontalScrollView sourceScroll = new HorizontalScrollView(this);
+        sourceScroll.setHorizontalScrollBarEnabled(false);
+        sourceRow = new LinearLayout(this);
+        sourceRow.setOrientation(LinearLayout.HORIZONTAL);
+        String[][] providers = {
+                {"ALL SOURCES", "all"}, {"AUDIUS", "audius"},
+                {"OPEN ARCHIVE", "archive"}, {"YOUTUBE", "youtube"},
+                {"LOCAL / FLAC", "local"}, {"RADIO", "radio"}
+        };
+        for (String[] provider : providers) sourceRow.addView(sourceButton(provider[0], provider[1]));
+        sourceScroll.addView(sourceRow);
+        LinearLayout.LayoutParams sourceLp = new LinearLayout.LayoutParams(-1, -2);
+        sourceLp.topMargin = dp(7);
+        screen.addView(sourceScroll, sourceLp);
+
         LinearLayout statusRow = new LinearLayout(this);
         statusRow.setGravity(Gravity.CENTER_VERTICAL);
         TextView sectionMark = text("✳", 14, ACCENT, true);
@@ -350,25 +377,29 @@ public final class MainActivity extends Activity {
         miniTextBlock.addView(nowPlayingText, new LinearLayout.LayoutParams(-1, -2));
         miniTextBlock.addView(miniHint, hintLp);
         mini.addView(miniTextBlock, new LinearLayout.LayoutParams(0, -2, 1));
-        miniTextBlock.setOnClickListener(v -> {
-            if (currentTrack != null) showPlayerDialog(currentTrack);
-            else loadAllSources(searchField.getText().toString().trim());
-        });
-        miniCover.setOnClickListener(v -> {
-            if (currentTrack != null) showPlayerDialog(currentTrack);
-            else loadAllSources(searchField.getText().toString().trim());
-        });
+        miniTextBlock.setOnClickListener(v -> openMiniPlayer());
+        miniCover.setOnClickListener(v -> openMiniPlayer());
 
         playPauseButton = text("▶", 21, BG, true);
         playPauseButton.setGravity(Gravity.CENTER);
         playPauseButton.setBackground(roundRect(ACCENT, 50));
         playPauseButton.setContentDescription("Play or pause");
-        playPauseButton.setOnClickListener(v -> togglePlayback());
-        mini.addView(playPauseButton, new LinearLayout.LayoutParams(dp(43), dp(43)));
-        mini.setOnClickListener(v -> {
-            if (currentTrack != null) showPlayerDialog(currentTrack);
-            else loadAllSources(searchField.getText().toString().trim());
+        playPauseButton.setContentDescription("Play or pause, or start the first result");
+        playPauseButton.setOnClickListener(v -> {
+            if (currentTrack != null && needsExternalPlayback(currentTrack)) {
+                showPlayerDialog(currentTrack);
+            } else if (MusicPlaybackService.hasTrack()) {
+                togglePlayback();
+            } else if (currentTrack != null) {
+                playTrack(currentTrack);
+            } else if (!visibleTracks.isEmpty()) {
+                playTrack(visibleTracks.get(0));
+            } else {
+                openMiniPlayer();
+            }
         });
+        mini.addView(playPauseButton, new LinearLayout.LayoutParams(dp(43), dp(43)));
+        mini.setOnClickListener(v -> openMiniPlayer());
         LinearLayout.LayoutParams miniLp = new LinearLayout.LayoutParams(-1, -2);
         miniLp.topMargin = dp(8);
         screen.addView(mini, miniLp);
@@ -398,8 +429,78 @@ public final class MainActivity extends Activity {
         setContentView(screen);
     }
 
+    private void openMiniPlayer() {
+        Track selected = currentTrack;
+        if (selected == null && !visibleTracks.isEmpty()) selected = visibleTracks.get(0);
+        if (selected != null) {
+            showPlayerDialog(selected);
+            return;
+        }
+        showEmptyPlayerDialog();
+    }
+
+    private void showEmptyPlayerDialog() {
+        Dialog dialog = new Dialog(this);
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setGravity(Gravity.CENTER_HORIZONTAL);
+        root.setPadding(dp(24), dp(20), dp(24), dp(24));
+        root.setBackground(createThemeBackdrop());
+
+        TextView close = text("⌄", 30, TEXT, true);
+        close.setGravity(Gravity.CENTER);
+        close.setBackground(roundRect(PANEL, 50));
+        LinearLayout.LayoutParams closeLp = new LinearLayout.LayoutParams(dp(46), dp(46));
+        closeLp.gravity = Gravity.START;
+        root.addView(close, closeLp);
+        close.setOnClickListener(v -> dialog.dismiss());
+
+        TextView glyph = text(themeSymbolFor(activeTheme), 62, ACCENT, true);
+        glyph.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams glyphLp = new LinearLayout.LayoutParams(-1, dp(135));
+        glyphLp.topMargin = dp(36);
+        root.addView(glyph, glyphLp);
+        TextView title = text("Your next listen starts here.", 25, TEXT, true);
+        title.setGravity(Gravity.CENTER);
+        TextView detail = text("Choose a result, import a local audio file, or search every connected public catalogue from one place.", 13, MUTED, false);
+        detail.setGravity(Gravity.CENTER);
+        detail.setLineSpacing(dp(3), 1.05f);
+        LinearLayout.LayoutParams detailLp = new LinearLayout.LayoutParams(-1, -2);
+        detailLp.topMargin = dp(10);
+        root.addView(title, new LinearLayout.LayoutParams(-1, -2));
+        root.addView(detail, detailLp);
+
+        TextView search = text("SEARCH MUSIC  ↗", 12, Color.WHITE, true);
+        search.setGravity(Gravity.CENTER);
+        search.setBackground(roundRect(ACCENT, 18));
+        LinearLayout.LayoutParams searchLp = new LinearLayout.LayoutParams(-1, dp(50));
+        searchLp.topMargin = dp(24);
+        root.addView(search, searchLp);
+        search.setOnClickListener(v -> { dialog.dismiss(); submitSearch(); });
+
+        TextView local = text("＋  CHOOSE LOCAL AUDIO / FLAC", 11, TEXT, true);
+        local.setGravity(Gravity.CENTER);
+        local.setBackground(roundRect(PANEL, 16));
+        LinearLayout.LayoutParams localLp = new LinearLayout.LayoutParams(-1, dp(48));
+        localLp.topMargin = dp(9);
+        root.addView(local, localLp);
+        local.setOnClickListener(v -> { dialog.dismiss(); chooseLocalAudio(); });
+
+        dialog.setContentView(root);
+        dialog.setCancelable(true);
+        dialog.show();
+        Window window = dialog.getWindow();
+        if (window != null) {
+            window.setBackgroundDrawable(new ColorDrawable(BG));
+            window.setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT);
+            window.setStatusBarColor(BG);
+            window.setNavigationBarColor(BG);
+            window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
+        }
+    }
+
     private View sourceButton(String label, String value) {
-        TextView b = text(label, 13, value.equals(source) ? BG : TEXT, true);
+        TextView b = text(label, 13, value.equals(source) ? Color.WHITE : TEXT, true);
         b.setGravity(Gravity.CENTER);
         b.setPadding(dp(15), 0, dp(15), 0);
         b.setBackground(roundRect(value.equals(source) ? ACCENT : PANEL_ALT, 18));
@@ -423,14 +524,17 @@ public final class MainActivity extends Activity {
             if (!(child instanceof TextView)) continue;
             String value = String.valueOf(child.getTag());
             boolean selected = value.equals(source);
-            ((TextView) child).setTextColor(selected ? BG : TEXT);
+            ((TextView) child).setTextColor(selected ? Color.WHITE : TEXT);
             child.setBackground(roundRect(selected ? ACCENT : PANEL_ALT, 18));
         }
     }
 
     private void applyThemeFromPreferences() {
         SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
-        activeTheme = prefs.getString("theme", "Frutiger Aero");
+        String savedTheme = prefs.getString("theme", "Frutiger Aero");
+        boolean knownTheme = false;
+        for (String available : THEME_NAMES) if (available.equals(savedTheme)) knownTheme = true;
+        activeTheme = knownTheme ? savedTheme : "Frutiger Aero";
         activeQuality = prefs.getString("quality", "Best available");
         switch (activeTheme) {
             case "Midwest Emo":
@@ -480,24 +584,26 @@ public final class MainActivity extends Activity {
             case "Frutiger Aero":
             default:
                 activeTheme = "Frutiger Aero";
-                BG = Color.rgb(8, 31, 47); PANEL = Color.rgb(19, 68, 83);
-                PANEL_ALT = Color.rgb(28, 104, 121); TEXT = Color.rgb(244, 255, 255);
-                MUTED = Color.rgb(166, 220, 229); ACCENT = Color.rgb(104, 246, 204); break;
+                // Bright aquatic sky, translucent glass, white highlights and deep-blue type.
+                BG = Color.rgb(204, 241, 249); PANEL = Color.rgb(239, 252, 255);
+                PANEL_ALT = Color.rgb(155, 220, 237); TEXT = Color.rgb(13, 62, 91);
+                MUTED = Color.rgb(42, 111, 139); ACCENT = Color.rgb(0, 133, 194); break;
         }
     }
 
     private void showThemeDialog() {
         Dialog dialog = new Dialog(this);
+        themeDialog = dialog;
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(BG);
+        root.setBackground(createThemeBackdrop());
         root.setPadding(dp(20), dp(16), dp(20), dp(18));
         LinearLayout heading = new LinearLayout(this);
         heading.setGravity(Gravity.CENTER_VERTICAL);
         LinearLayout copy = new LinearLayout(this);
         copy.setOrientation(LinearLayout.VERTICAL);
         TextView title = text("Choose your world", 24, TEXT, true);
-        TextView subtitle = text("Each theme changes the mood, texture and colour language.", 11, MUTED, false);
+        TextView subtitle = text("Distinct art direction, not just a different accent colour.", 11, MUTED, false);
         LinearLayout.LayoutParams subtitleLp = new LinearLayout.LayoutParams(-1, -2);
         subtitleLp.topMargin = dp(5);
         copy.addView(title);
@@ -523,13 +629,12 @@ public final class MainActivity extends Activity {
             row.setGravity(Gravity.CENTER_VERTICAL);
             row.setOrientation(LinearLayout.HORIZONTAL);
             row.setPadding(dp(11), dp(11), dp(11), dp(11));
-            int preview = themeAccentFor(name);
             GradientDrawable previewBg = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
-                    new int[]{preview, blendColor(preview, BG, 0.55f), BG});
+                    themePreviewColors(name));
             previewBg.setCornerRadius(dp("Retro CRT".equals(name) ? 5 : 17));
             if (name.equals(activeTheme)) previewBg.setStroke(dp(2), TEXT);
-            row.setBackground(name.equals(activeTheme) ? previewBg : panelCardDrawable());
-            TextView icon = text("◉", 24, TEXT, true);
+            row.setBackground(panelCardDrawable());
+            TextView icon = text(themeSymbolFor(name), 24, Color.WHITE, true);
             icon.setGravity(Gravity.CENTER);
             icon.setBackground(previewBg);
             row.addView(icon, new LinearLayout.LayoutParams(dp(48), dp(48)));
@@ -552,13 +657,19 @@ public final class MainActivity extends Activity {
             rowLp.bottomMargin = dp(8);
             list.addView(row, rowLp);
             row.setOnClickListener(v -> {
+                // Dismiss both stacked dialogs before recreating the Activity; otherwise the
+                // old Settings window can outlive the Activity window token.
                 getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString("theme", name).apply();
                 dialog.dismiss();
+                if (settingsDialog != null && settingsDialog.isShowing()) settingsDialog.dismiss();
+                settingsDialog = null;
+                themeDialog = null;
                 recreate();
             });
         }
         dialog.setContentView(root);
         dialog.setCancelable(true);
+        dialog.setOnDismissListener(ignored -> { if (themeDialog == dialog) themeDialog = null; });
         dialog.show();
         Window window = dialog.getWindow();
         if (window != null) {
@@ -569,26 +680,28 @@ public final class MainActivity extends Activity {
 
     private String themeNarrativeFor(String name) {
         switch (name) {
+            case "Frutiger Aero": return "Aqua glass · blue skies · bubbles and bright early-web optimism";
             case "Midwest Emo": return "Bedroom shows, diary pages, worn guitar strings";
-            case "Synthwave": return "Neon, chrome, night-drive silhouettes";
-            case "Vaporwave": return "Pastel digital decay and dream logic";
-            case "Cyberpunk": return "Hard contrast, signal noise, electric edge";
-            case "Aurora Forest": return "Bioluminescent greens and organic shapes";
-            case "AMOLED": return "Near-black canvas with precise highlights";
-            case "Y2K Glass": return "Liquid glass, chrome reflections, soft glow";
-            case "Candy Pop": return "Playful stickers and loud editorial colour";
-            case "Retro CRT": return "Terminal green, hard corners, broadcast grit";
-            case "Sunset Coast": return "Warm haze, soft edges, late-afternoon grain";
-            case "Dark Academia": return "Ink, antique gold, paper and carved detail";
-            default: return "Translucent water, cool gradients, bright glass";
+            case "Synthwave": return "Neon grids · chrome drums · after-hours energy";
+            case "Vaporwave": return "Lost malls · soft pixels · yesterday's future";
+            case "Cyberpunk": return "Glitched transmissions · hard edges · underground frequencies";
+            case "Aurora Forest": return "Mist, moss and music from the edge of the map";
+            case "AMOLED": return "True black · quiet controls · no visual noise";
+            case "Y2K Glass": return "Iridescent surfaces, soft chrome and digital nostalgia";
+            case "Candy Pop": return "Playful shapes, bubblegum colour and a little chaos";
+            case "Retro CRT": return "Phosphor green, scanlines and late-night broadcasts";
+            case "Sunset Coast": return "Warm haze, peach skies and the last light";
+            case "Dark Academia": return "Ink, paper, old rooms and records worth keeping";
+            default: return "An independent mix of open catalogues, local files and strange little finds.";
         }
     }
 
     private void showSettingsDialog() {
         Dialog dialog = new Dialog(this);
+        settingsDialog = dialog;
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(BG);
+        root.setBackground(createThemeBackdrop());
         root.setPadding(dp(20), dp(16), dp(20), dp(18));
         LinearLayout heading = new LinearLayout(this);
         heading.setGravity(Gravity.CENTER_VERTICAL);
@@ -635,6 +748,7 @@ public final class MainActivity extends Activity {
 
         dialog.setContentView(root);
         dialog.setCancelable(true);
+        dialog.setOnDismissListener(ignored -> { if (settingsDialog == dialog) settingsDialog = null; });
         dialog.show();
         Window window = dialog.getWindow();
         if (window != null) {
@@ -684,11 +798,12 @@ public final class MainActivity extends Activity {
         new AlertDialog.Builder(this)
                 .setTitle("Connect music accounts")
                 .setItems(new String[]{"YouTube account", "YouTube Music", "Spotify sign-in",
-                        ".fmbot / Last.fm setup", "Connection status & requirements"}, (dialog, which) -> {
+                        "Open Spotui player", ".fmbot / Last.fm setup", "Connection status & requirements"}, (dialog, which) -> {
                     if (which == 0) openServiceLink("https://www.youtube.com/account", new String[]{"com.google.android.youtube"});
                     else if (which == 1) openServiceLink("https://music.youtube.com/", new String[]{"com.google.android.apps.youtube.music", "app.morphe.android.apps.youtube.music"});
                     else if (which == 2) openServiceLink("https://accounts.spotify.com/login", new String[]{"com.spotify.music"});
-                    else if (which == 3) openServiceLink("https://fm.bot/", new String[0]);
+                    else if (which == 3) openSpotui();
+                    else if (which == 4) openServiceLink("https://fm.bot/", new String[0]);
                     else showConnectionStatusDialog();
                 })
                 .setNegativeButton("Close", null)
@@ -706,6 +821,23 @@ public final class MainActivity extends Activity {
                 .setTitle("Connection status")
                 .setMessage(explanation)
                 .setPositiveButton("Done", null)
+                .show();
+    }
+
+    private void openSpotui() {
+        try {
+            Intent launch = getPackageManager().getLaunchIntentForPackage("com.music.spotui");
+            if (launch != null) {
+                startActivity(launch);
+                if (statusText != null) statusText.setText("Handed off to Spotui. Spotify playback is handled by that separate app.");
+                return;
+            }
+        } catch (Exception ignored) {}
+        new AlertDialog.Builder(this)
+                .setTitle("Spotui is not installed")
+                .setMessage("Spotui is a separate open-source Android player for Spotify-account features. Spotty cannot embed its private player session. Open the official project page to install it.")
+                .setPositiveButton("Official project", (d, w) -> openServiceLink("https://github.com/Spotui/Spotui/releases/latest", new String[0]))
+                .setNegativeButton("Cancel", null)
                 .show();
     }
 
@@ -1177,6 +1309,7 @@ public final class MainActivity extends Activity {
         ((InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE))
                 .hideSoftInputFromWindow(searchField.getWindowToken(), 0);
         source = "all";
+        refreshSourceButtons(sourceRow);
         loadAllSources(query);
     }
 
@@ -1187,6 +1320,7 @@ public final class MainActivity extends Activity {
     private void loadAllSources(String query, boolean retryAttempt) {
         final String q = query == null ? "" : query.trim();
         source = "all";
+        refreshSourceButtons(sourceRow);
         final int version = ++allSearchVersion;
         youtubeSearchVersion++;
         resultHeading.setText(q.isEmpty() ? "FRESH FINDS" : "SEARCH RESULTS");
@@ -1595,11 +1729,11 @@ public final class MainActivity extends Activity {
             Intent morpheIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
             morpheIntent.setPackage("app.morphe.android.youtube");
             startActivity(morpheIntent);
-            statusText.setText("Opened the selected YouTube link; Spotty stays available in the background.");
+            statusText.setText("Opened in Morphe YouTube; Spotty remains available in the background.");
         } catch (Exception morpheUnavailable) {
             try {
                 startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
-                statusText.setText("Opened the selected YouTube link in an available app.");
+                statusText.setText("Morphe not detected; opened the video in the available YouTube app or browser.");
             } catch (Exception noHandler) {
                 statusText.setText("No installed app or browser can open this YouTube link.");
             }
@@ -2168,18 +2302,33 @@ public final class MainActivity extends Activity {
     }
 
     private GradientDrawable heroDrawable() {
-        int edge = "Dark Academia".equals(activeTheme) ? Color.rgb(92, 68, 41)
-                : ("Midwest Emo".equals(activeTheme) ? Color.rgb(95, 53, 81) : ACCENT);
-        GradientDrawable d = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
-                new int[]{blendColor(PANEL_ALT, edge, 0.34f), PANEL, BG});
-        int radius = "Retro CRT".equals(activeTheme) ? 8 : ("Dark Academia".equals(activeTheme) ? 13 : 25);
+        int radius = "Retro CRT".equals(activeTheme) ? 8 :
+                ("Dark Academia".equals(activeTheme) ? 13 : ("Midwest Emo".equals(activeTheme) ? 12 : 25));
+        int[] colors;
+        switch (activeTheme) {
+            case "Frutiger Aero": colors = new int[]{Color.rgb(106, 215, 241), Color.rgb(188, 242, 250), Color.rgb(250, 255, 255)}; break;
+            case "Midwest Emo": colors = new int[]{Color.rgb(80, 46, 78), Color.rgb(42, 34, 49), Color.rgb(27, 24, 31)}; break;
+            case "Synthwave": colors = new int[]{Color.rgb(107, 31, 125), Color.rgb(42, 20, 71), BG}; break;
+            case "Vaporwave": colors = new int[]{Color.rgb(93, 76, 151), Color.rgb(54, 53, 111), Color.rgb(27, 45, 75)}; break;
+            case "Cyberpunk": colors = new int[]{Color.rgb(41, 58, 51), Color.rgb(19, 33, 37), Color.BLACK}; break;
+            case "Aurora Forest": colors = new int[]{Color.rgb(48, 120, 91), Color.rgb(17, 63, 55), BG}; break;
+            case "AMOLED": colors = new int[]{Color.rgb(28, 28, 35), Color.rgb(8, 8, 10), Color.BLACK}; break;
+            case "Y2K Glass": colors = new int[]{Color.rgb(163, 213, 249), Color.rgb(76, 122, 186), Color.rgb(37, 54, 103)}; break;
+            case "Candy Pop": colors = new int[]{Color.rgb(226, 89, 170), Color.rgb(135, 47, 130), BG}; break;
+            case "Retro CRT": colors = new int[]{Color.rgb(28, 79, 46), Color.rgb(12, 41, 28), Color.rgb(4, 20, 14)}; break;
+            case "Sunset Coast": colors = new int[]{Color.rgb(245, 145, 126), Color.rgb(155, 73, 104), BG}; break;
+            case "Dark Academia": colors = new int[]{Color.rgb(96, 71, 45), Color.rgb(53, 44, 34), BG}; break;
+            default: colors = new int[]{PANEL_ALT, PANEL, BG}; break;
+        }
+        GradientDrawable d = new GradientDrawable(GradientDrawable.Orientation.TL_BR, colors);
         d.setCornerRadius(dp(radius));
-        d.setStroke(dp(1), Color.argb(55, Color.red(edge), Color.green(edge), Color.blue(edge)));
+        d.setStroke(dp(1), Color.argb(90, Color.red(ACCENT), Color.green(ACCENT), Color.blue(ACCENT)));
         return d;
     }
 
     private String themeHeadline() {
         switch (activeTheme) {
+            case "Frutiger Aero": return "The internet felt like sunshine.";
             case "Midwest Emo": return "Songs for the long way home.";
             case "Synthwave": return "Midnight looks good on you.";
             case "Vaporwave": return "A soft glitch in the ordinary.";
@@ -2197,6 +2346,7 @@ public final class MainActivity extends Activity {
 
     private String themeNarrative() {
         switch (activeTheme) {
+            case "Frutiger Aero": return "Glossy aqua · glass bubbles · blue skies and clean air";
             case "Midwest Emo": return "Fuzzy guitars · diary lyrics · 2 a.m. bus rides";
             case "Synthwave": return "Neon horizons · chrome drums · after-hours energy";
             case "Vaporwave": return "Lost malls · soft pixels · yesterday's future";
@@ -2218,9 +2368,12 @@ public final class MainActivity extends Activity {
         if (track != null && "deezer-preview".equals(track.provider)) second = Color.rgb(225, 125, 69);
         if (track != null && "audius".equals(track.provider)) second = Color.rgb(92, 192, 180);
         if (track != null && ("archive".equals(track.provider) || "archive-playable".equals(track.provider))) second = Color.rgb(190, 163, 111);
-        GradientDrawable d = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
-                new int[]{blendColor(second, TEXT, 0.12f), PANEL_ALT, BG});
-        d.setCornerRadius(dp(18));
+        int[] colors = "Frutiger Aero".equals(activeTheme)
+                ? new int[]{Color.rgb(246, 255, 255), Color.rgb(137, 224, 243), Color.rgb(22, 141, 199)}
+                : new int[]{blendColor(second, TEXT, 0.12f), PANEL_ALT, BG};
+        GradientDrawable d = new GradientDrawable(GradientDrawable.Orientation.TL_BR, colors);
+        d.setCornerRadius(dp("Retro CRT".equals(activeTheme) ? 7 : 18));
+        d.setStroke(dp(1), Color.argb(65, Color.red(ACCENT), Color.green(ACCENT), Color.blue(ACCENT)));
         return d;
     }
 
@@ -2393,6 +2546,108 @@ public final class MainActivity extends Activity {
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
         lp.bottomMargin = dp(8);
         parent.addView(row, lp);
+    }
+
+    private Drawable createThemeBackdrop() {
+        return new Drawable() {
+            private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+
+            @Override public void draw(Canvas canvas) {
+                Rect bounds = getBounds();
+                float w = bounds.width(), h = bounds.height();
+                int top = BG, bottom = BG;
+                switch (activeTheme) {
+                    case "Frutiger Aero": top = Color.rgb(119, 215, 244); bottom = Color.rgb(232, 252, 255); break;
+                    case "Y2K Glass": top = Color.rgb(33, 87, 154); bottom = Color.rgb(120, 175, 220); break;
+                    case "Synthwave": top = Color.rgb(41, 12, 70); bottom = Color.rgb(16, 8, 31); break;
+                    case "Vaporwave": top = Color.rgb(73, 59, 133); bottom = Color.rgb(25, 30, 62); break;
+                    case "Sunset Coast": top = Color.rgb(150, 70, 100); bottom = Color.rgb(45, 24, 52); break;
+                    case "Candy Pop": top = Color.rgb(105, 34, 94); bottom = Color.rgb(36, 17, 41); break;
+                    case "Aurora Forest": top = Color.rgb(17, 78, 65); bottom = Color.rgb(4, 22, 23); break;
+                    case "Cyberpunk": top = Color.rgb(19, 36, 38); bottom = Color.rgb(4, 10, 14); break;
+                    case "Midwest Emo": top = Color.rgb(39, 30, 46); bottom = Color.rgb(18, 17, 24); break;
+                    case "Retro CRT": top = Color.rgb(10, 42, 28); bottom = Color.rgb(3, 15, 10); break;
+                    case "Dark Academia": top = Color.rgb(53, 45, 35); bottom = Color.rgb(24, 22, 19); break;
+                    default: top = BG; bottom = Color.BLACK; break;
+                }
+                paint.setStyle(Paint.Style.FILL);
+                paint.setShader(new LinearGradient(0, 0, w, h, top, bottom, Shader.TileMode.CLAMP));
+                canvas.drawRect(bounds, paint);
+                paint.setShader(null);
+
+                if ("Frutiger Aero".equals(activeTheme) || "Y2K Glass".equals(activeTheme)) {
+                    drawBubble(canvas, w * 0.82f, h * 0.15f, w * 0.16f);
+                    drawBubble(canvas, w * 0.11f, h * 0.42f, w * 0.09f);
+                    drawBubble(canvas, w * 0.74f, h * 0.74f, w * 0.12f);
+                    paint.setStyle(Paint.Style.STROKE);
+                    paint.setStrokeWidth(Math.max(1f, dp(1)));
+                    paint.setColor(Color.argb(80, 255, 255, 255));
+                    canvas.drawLine(0, h * 0.27f, w * 0.68f, 0, paint);
+                    canvas.drawLine(w * 0.34f, h, w, h * 0.54f, paint);
+                } else if ("Synthwave".equals(activeTheme) || "Vaporwave".equals(activeTheme)) {
+                    float horizon = h * 0.65f;
+                    paint.setStyle(Paint.Style.STROKE);
+                    paint.setStrokeWidth(Math.max(1f, dp(1)));
+                    paint.setColor(Color.argb(42, Color.red(ACCENT), Color.green(ACCENT), Color.blue(ACCENT)));
+                    for (int i = 0; i < 9; i++) {
+                        float t = i / 8f;
+                        float y = horizon + (h - horizon) * t * t;
+                        canvas.drawLine(0, y, w, y, paint);
+                    }
+                    for (int i = -5; i <= 5; i++) canvas.drawLine(w / 2f, horizon, w / 2f + i * w * 0.24f, h, paint);
+                } else if ("Retro CRT".equals(activeTheme)) {
+                    paint.setStyle(Paint.Style.STROKE);
+                    paint.setStrokeWidth(1f);
+                    paint.setColor(Color.argb(23, 127, 255, 91));
+                    for (float y = 0; y < h; y += dp(4)) canvas.drawLine(0, y, w, y, paint);
+                } else if ("Aurora Forest".equals(activeTheme)) {
+                    paint.setStyle(Paint.Style.FILL);
+                    paint.setShader(new RadialGradient(w * 0.75f, h * 0.23f, w * 0.55f,
+                            new int[]{Color.argb(60, 64, 255, 177), Color.TRANSPARENT},
+                            null, Shader.TileMode.CLAMP));
+                    canvas.drawRect(bounds, paint);
+                    paint.setShader(null);
+                } else if ("Sunset Coast".equals(activeTheme)) {
+                    paint.setStyle(Paint.Style.FILL);
+                    paint.setShader(new RadialGradient(w * 0.82f, h * 0.15f, w * 0.23f,
+                            new int[]{Color.argb(90, 255, 201, 139), Color.argb(0, 255, 201, 139)},
+                            null, Shader.TileMode.CLAMP));
+                    canvas.drawCircle(w * 0.82f, h * 0.15f, w * 0.23f, paint);
+                    paint.setShader(null);
+                } else if ("Dark Academia".equals(activeTheme)) {
+                    paint.setStyle(Paint.Style.STROKE);
+                    paint.setStrokeWidth(1f);
+                    paint.setColor(Color.argb(20, 214, 175, 91));
+                    for (float y = dp(60); y < h; y += dp(34)) canvas.drawLine(0, y, w, y, paint);
+                } else if ("Candy Pop".equals(activeTheme)) {
+                    paint.setStyle(Paint.Style.STROKE);
+                    paint.setStrokeWidth(dp(1));
+                    paint.setColor(Color.argb(24, 255, 172, 211));
+                    for (int i = 0; i < 6; i++) canvas.drawCircle((i % 3) * w / 2f + w * 0.12f,
+                            h * (0.12f + (i / 3) * 0.72f), w * 0.12f, paint);
+                }
+                paint.setStyle(Paint.Style.FILL);
+                paint.setShader(null);
+            }
+
+            private void drawBubble(Canvas canvas, float cx, float cy, float radius) {
+                paint.setStyle(Paint.Style.FILL);
+                paint.setShader(new RadialGradient(cx - radius * 0.25f, cy - radius * 0.3f, radius,
+                        new int[]{Color.argb(110, 255, 255, 255), Color.argb(24, 255, 255, 255),
+                                Color.argb(2, 255, 255, 255)}, new float[]{0f, 0.6f, 1f}, Shader.TileMode.CLAMP));
+                canvas.drawCircle(cx, cy, radius, paint);
+                paint.setShader(null);
+                paint.setStyle(Paint.Style.STROKE);
+                paint.setStrokeWidth(Math.max(1f, dp(1)));
+                paint.setColor(Color.argb(110, 255, 255, 255));
+                canvas.drawCircle(cx, cy, radius * 0.94f, paint);
+                paint.setStyle(Paint.Style.FILL);
+            }
+
+            @Override public void setAlpha(int alpha) {}
+            @Override public void setColorFilter(ColorFilter colorFilter) {}
+            @Override public int getOpacity() { return PixelFormat.OPAQUE; }
+        };
     }
 
     private int themeAccentFor(String theme) {
@@ -2707,6 +2962,13 @@ public final class MainActivity extends Activity {
                 artistLp.topMargin = dp(4);
                 info.addView(name);
                 info.addView(artist, artistLp);
+                TextView sourceBadge = text(displayProvider(track), 9, ACCENT, true);
+                sourceBadge.setLetterSpacing(0.03f);
+                sourceBadge.setMaxLines(1);
+                sourceBadge.setEllipsize(android.text.TextUtils.TruncateAt.END);
+                LinearLayout.LayoutParams sourceBadgeLp = new LinearLayout.LayoutParams(-1, -2);
+                sourceBadgeLp.topMargin = dp(5);
+                info.addView(sourceBadge, sourceBadgeLp);
                 card.addView(info, new LinearLayout.LayoutParams(0, -2, 1));
 
                 TextView like = text(isFavorite(track) ? "♥" : "♡", 22,
@@ -2763,11 +3025,22 @@ public final class MainActivity extends Activity {
 
     private GradientDrawable panelCardDrawable() {
         int radius = "Retro CRT".equals(activeTheme) ? 7 :
-                ("Dark Academia".equals(activeTheme) ? 12 : ("Y2K Glass".equals(activeTheme) ? 23 : 19));
+                ("Dark Academia".equals(activeTheme) ? 12 : ("Midwest Emo".equals(activeTheme) ? 10 :
+                (("Y2K Glass".equals(activeTheme) || "Frutiger Aero".equals(activeTheme)) ? 24 : 19)));
         GradientDrawable d;
         if ("AMOLED".equals(activeTheme)) {
             d = roundRect(Color.rgb(15, 15, 19), radius);
             d.setStroke(dp(1), Color.rgb(49, 49, 57));
+        } else if ("Frutiger Aero".equals(activeTheme)) {
+            d = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
+                    new int[]{Color.rgb(251, 255, 255), Color.rgb(219, 247, 252), Color.rgb(183, 230, 242)});
+            d.setCornerRadius(dp(radius));
+            d.setStroke(dp(1), Color.argb(210, 255, 255, 255));
+        } else if ("Y2K Glass".equals(activeTheme)) {
+            d = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
+                    new int[]{Color.rgb(185, 219, 246), Color.rgb(72, 107, 166), Color.rgb(51, 67, 117)});
+            d.setCornerRadius(dp(radius));
+            d.setStroke(dp(1), Color.argb(150, 239, 249, 255));
         } else if ("Dark Academia".equals(activeTheme)) {
             d = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
                     new int[]{Color.rgb(64, 51, 38), PANEL});
@@ -2776,11 +3049,26 @@ public final class MainActivity extends Activity {
         } else if ("Retro CRT".equals(activeTheme)) {
             d = roundRect(PANEL, radius);
             d.setStroke(dp(1), Color.argb(125, Color.red(ACCENT), Color.green(ACCENT), Color.blue(ACCENT)));
-        } else if ("Y2K Glass".equals(activeTheme)) {
+        } else if ("Midwest Emo".equals(activeTheme)) {
+            d = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
+                    new int[]{Color.rgb(55, 43, 61), Color.rgb(31, 27, 37)});
+            d.setCornerRadius(dp(radius));
+            d.setStroke(dp(1), Color.rgb(102, 71, 98));
+        } else if ("Synthwave".equals(activeTheme) || "Vaporwave".equals(activeTheme)) {
+            d = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
+                    new int[]{PANEL_ALT, PANEL, BG});
+            d.setCornerRadius(dp(radius));
+            d.setStroke(dp(1), Color.argb(150, Color.red(ACCENT), Color.green(ACCENT), Color.blue(ACCENT)));
+        } else if ("Cyberpunk".equals(activeTheme) || "Aurora Forest".equals(activeTheme)) {
+            d = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
+                    new int[]{PANEL, BG});
+            d.setCornerRadius(dp(radius));
+            d.setStroke(dp(1), Color.argb(150, Color.red(ACCENT), Color.green(ACCENT), Color.blue(ACCENT)));
+        } else if ("Sunset Coast".equals(activeTheme) || "Candy Pop".equals(activeTheme)) {
             d = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
                     new int[]{PANEL_ALT, PANEL});
             d.setCornerRadius(dp(radius));
-            d.setStroke(dp(1), Color.argb(120, 235, 247, 255));
+            d.setStroke(dp(1), Color.argb(120, Color.red(ACCENT), Color.green(ACCENT), Color.blue(ACCENT)));
         } else {
             d = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
                     new int[]{blendColor(PANEL_ALT, ACCENT, 0.10f), PANEL});
@@ -2929,12 +3217,23 @@ public final class MainActivity extends Activity {
     }
 
     private void playTrack(Track track) {
+        if (track == null) {
+            statusText.setText("Choose a result first.");
+            return;
+        }
         int visibleIndex = visibleTracks.indexOf(track);
         if (visibleIndex >= 0) {
             playbackQueue = new ArrayList<>(visibleTracks);
             playbackQueueIndex = visibleIndex;
         }
         if (needsExternalPlayback(track)) {
+            currentTrack = track;
+            nowPlayingText.setText(track.title + " · ready to open externally");
+            playPauseButton.setText("↗");
+            if (miniArtwork != null) {
+                miniArtwork.setImageResource(R.drawable.spotty_app_icon);
+                if (!track.artworkUrl.isEmpty()) loadTrackArtwork(miniArtwork, track.artworkUrl);
+            }
             showPlayerDialog(track);
             return;
         }
@@ -3296,7 +3595,13 @@ public final class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
-        // A UI Activity may be destroyed while music continues in the foreground service.
+        // Close Activity-owned dialogs before their window token becomes invalid.
+        if (themeDialog != null && themeDialog.isShowing()) themeDialog.dismiss();
+        if (settingsDialog != null && settingsDialog.isShowing()) settingsDialog.dismiss();
+        if (playerDialog != null && playerDialog.isShowing()) playerDialog.dismiss();
+        themeDialog = null;
+        settingsDialog = null;
+        playerDialog = null;
         if (playbackStateReceiver != null) {
             try { unregisterReceiver(playbackStateReceiver); } catch (IllegalArgumentException ignored) {}
             playbackStateReceiver = null;
