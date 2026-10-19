@@ -8,22 +8,25 @@ LOGCAT="$GITHUB_WORKSPACE/release-output/emulator-logcat.txt"
 SCREENSHOT="$GITHUB_WORKSPACE/release-output/emulator-smoke-test.png"
 
 test -s "$APK"
-echo "[smoke] Letting the emulator launcher settle"
-timeout 20s adb shell input keyevent HOME
-sleep 10
+echo "[smoke] Verifying emulator boot without foregrounding the home launcher"
+BOOTED="$(timeout 20s adb shell getprop sys.boot_completed | tr -d '\r')"
+if [ "$BOOTED" != "1" ]; then
+  echo "Android emulator has not completed boot."
+  exit 1
+fi
 echo "[smoke] Installing APK"
 timeout 90s adb install "$APK"
-echo "[smoke] Clearing runtime logs after emulator warm-up"
+echo "[smoke] Clearing runtime logs before direct activity launch"
 timeout 20s adb logcat -c
-echo "[smoke] Launching Spotty"
+echo "[smoke] Launching Spotty activity directly (without monkey/home-launcher handoff)"
 timeout 20s adb shell am force-stop com.spotty.music
-timeout 30s adb shell monkey -p com.spotty.music 1
+timeout 30s adb shell am start -W -n com.spotty.music/.MainActivity
 sleep 10
 
 echo "[smoke] Checking process, crash logs, and ANRs"
 PID="$(timeout 20s adb shell pidof com.spotty.music | tr -d '\r' || true)"
 timeout 30s adb logcat -d -b main -b system -b events > "$LOGCAT"
-grep -E "FATAL EXCEPTION|ANR in com\\.spotty\\.music|Input dispatching timed out|Process: com\\.spotty\\.music" "$LOGCAT" > "$ERROR_LOG" || true
+grep -E "FATAL EXCEPTION|ANR in com\\.spotty\\.music|am_anr.*com\\.spotty\\.music|Input dispatching timed out.*com\\.spotty\\.music|Process: com\\.spotty\\.music" "$LOGCAT" > "$ERROR_LOG" || true
 echo "[smoke] Capturing emulator screenshot"
 timeout 20s adb shell screencap -p /sdcard/spotty-smoke-test.png
 timeout 30s adb pull /sdcard/spotty-smoke-test.png "$SCREENSHOT"
@@ -40,9 +43,9 @@ if grep -Eiq "FATAL EXCEPTION|ANR in com\\.spotty\\.music|Input dispatching time
   exit 1
 fi
 
-if grep -Fq "ANR in com.google.android.apps.nexuslauncher" "$LOGCAT"; then
+if grep -Eiq "ANR in com\\.google\\.android\\.apps\\.nexuslauncher|am_anr.*com\\.google\\.android\\.apps\\.nexuslauncher" "$LOGCAT"; then
   echo "The emulator home launcher became unresponsive during the test; treating this as an unstable emulator session."
-  grep -F "ANR in com.google.android.apps.nexuslauncher" "$LOGCAT" || true
+  grep -Ei "ANR in com\\.google\\.android\\.apps\\.nexuslauncher|am_anr.*com\\.google\\.android\\.apps\\.nexuslauncher" "$LOGCAT" || true
   exit 1
 fi
 
