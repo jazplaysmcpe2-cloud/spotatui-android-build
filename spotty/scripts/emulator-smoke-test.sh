@@ -153,7 +153,7 @@ import wave
 
 path = sys.argv[1]
 rate = 44100
-seconds = 16
+seconds = 60
 frames = rate * seconds
 samples = array.array("h", (
     int(1800 * math.sin(2.0 * math.pi * 440.0 * i / rate))
