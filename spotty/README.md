@@ -16,16 +16,33 @@ For background audio on YouTube, install and configure Morphe separately using t
 
 YouTube catalog searching depends on public Invidious instances, which are third-party community services and can be temporarily unavailable or rate-limited. Spotty includes several documented instances as fallbacks; if none respond, it offers to open the search directly in Morphe/YouTube.
 
-## Build
+## Background playback and permissions
+
+Native URL and local-file audio playback is owned by a foreground media service, not the Activity. It shows a persistent Android notification with pause/resume and stop controls, requests audio focus, handles headphone/other-app focus changes, uses a partial wake lock while audio is actively playing, and retries a failed stream a limited number of times. The service stores its current source so Android can attempt to restore playback after a process restart.
+
+The app declares Internet access, media-playback foreground-service permissions and WAKE_LOCK. Android 13+ notification permission is requested when the user first starts playback. Local files are selected through Android's document picker / folder picker, so the app does not ask for unrestricted storage access.
+
+No Android app can honestly guarantee 24/7 uninterrupted audio: the OS can force-stop an app, battery settings can restrict it, and remote providers can disconnect or remove a track. A persistent notification and bounded reconnection make playback more robust, not infallible. On phones with aggressive battery management, users may need to allow background activity for Spotty.
+
+## Build and persistent release signing
 
 Requires JDK 17, Android SDK platform 35, Android build tools 35.0.0, and Gradle 8.10.2.
 
 ```bash
 cd spotty
-gradle --no-daemon :app:assembleDebug
+gradle --no-daemon :app:assembleDebug :app:assembleRelease
 ```
 
-The APK is at `spotty/app/build/outputs/apk/debug/app-debug.apk`. The GitHub Actions workflow builds, verifies, and smoke-tests the APK. It publishes a release from `main` when the build succeeds.
+The public release workflow builds both variants. Pull-request CI can fall back to the debug-signed APK when release secrets are absent; public releases from `main` are blocked unless all four persistent signing secrets are set. Configure these under GitHub **Settings → Secrets and variables → Actions → New repository secret**:
+
+- `ANDROID_KEYSTORE_BASE64`: base64 of the long-term JKS keystore, all one line
+- `ANDROID_KEYSTORE_PASSWORD`: keystore password
+- `ANDROID_KEY_ALIAS`: keystore alias
+- `ANDROID_KEY_PASSWORD`: private-key password
+
+Keep the keystore and values out of the repo, issues, commits, and PR comments. Back up the key securely; losing it prevents normal in-place updates. The previously distributed build 47 was debug-signed, so switching to a different release key means uninstalling that debug build before installing the first persistent-key release (local data may be removed). Subsequent releases must reuse this same key.
+
+Once the secrets are set, re-run the Spotty workflow or make a commit to trigger it. The workflow verifies the signed, non-debuggable APK, installs and launches it in an Android emulator, checks the media-service permissions and crash/ANR logs, and publishes a tagged release from `main` only after all gates pass.
 
 ## Limitations
 
