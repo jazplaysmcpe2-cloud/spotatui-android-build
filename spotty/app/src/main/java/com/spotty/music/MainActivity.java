@@ -1,6 +1,11 @@
 package com.spotty.music;
 
 import android.app.Activity;
+import android.Manifest;
+import android.content.BroadcastReceiver;
+import android.content.IntentFilter;
+import android.content.pm.PackageManager;
+import android.database.Cursor;
 import android.app.AlertDialog;
 import android.app.DownloadManager;
 import android.graphics.Color;
@@ -9,6 +14,7 @@ import android.graphics.drawable.GradientDrawable;
 import android.media.AudioAttributes;
 import android.media.MediaPlayer;
 import android.os.Bundle;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Environment;
 import android.os.Looper;
@@ -28,6 +34,7 @@ import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import android.provider.OpenableColumns;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -53,6 +60,7 @@ import java.util.concurrent.TimeUnit;
 public final class MainActivity extends Activity {
     private int BG, PANEL, PANEL_ALT, TEXT, MUTED, ACCENT;
     private static final int REQUEST_PLAYLIST_FILE = 7234;
+    private static final int REQUEST_LOCAL_AUDIO = 7235;
     private static final String PREFS = "spotty_preferences";
     private static final String[] THEME_NAMES = {
             "Frutiger Aero", "Midwest Emo", "Synthwave", "Vaporwave",
@@ -81,6 +89,8 @@ public final class MainActivity extends Activity {
     private int youtubeSearchVersion = 0;
     private final List<Track> playlistTracks = new ArrayList<>();
     private final List<Track> favoriteTracks = new ArrayList<>();
+    private final List<Track> localTracks = new ArrayList<>();
+    private BroadcastReceiver playbackStateReceiver;
     private List<Track> playbackQueue = new ArrayList<>();
     private int playbackQueueIndex = -1;
     private TextView previousTrackButton;
@@ -98,10 +108,19 @@ public final class MainActivity extends Activity {
         importedPlaylistName = savedPrefs.getString("imported_playlist_name", "Imported playlist");
         if (!savedPlaylist.trim().isEmpty()) playlistTracks.addAll(parsePlaylistTracks(savedPlaylist));
         favoriteTracks.addAll(readFavoriteTracks(savedPrefs.getString("favorite_tracks_json", "[]")));
+        localTracks.addAll(readFavoriteTracks(savedPrefs.getString("local_tracks_json", "[]")));
         getWindow().setStatusBarColor(BG);
         getWindow().setNavigationBarColor(BG);
         getWindow().getDecorView().setSystemUiVisibility(0);
         buildUi();
+        registerPlaybackStateReceiver();
+        if (MusicPlaybackService.hasTrack()) {
+            currentTrack = new Track("background-playback", MusicPlaybackService.currentTitle(),
+                    MusicPlaybackService.currentArtist(), "Background audio", "background",
+                    MusicPlaybackService.currentUrl(), "", "");
+            nowPlayingText.setText(currentTrack.title + " — " + currentTrack.artist);
+            playPauseButton.setText(MusicPlaybackService.isPlaying() ? "Ⅱ" : "▶");
+        }
         loadCurrentSource("");
         checkForUpdatesIfDue(false);
     }
@@ -159,6 +178,9 @@ public final class MainActivity extends Activity {
         sourceRow.addView(sourceButton("Morphe Music", "ytmusic"));
         sourceRow.addView(sourceButton("Audius", "audius"));
         sourceRow.addView(sourceButton("Open Archive", "archive"));
+        sourceRow.addView(sourceButton("Deezer previews", "deezer"));
+        sourceRow.addView(sourceButton("SoundCloud", "soundcloud"));
+        sourceRow.addView(sourceButton("Local FLAC", "local"));
         sourceRow.addView(sourceButton("Radio", "radio"));
         sourceRow.addView(sourceButton("Playlists", "playlist"));
         sourceRow.addView(sourceButton("Liked", "liked"));
@@ -551,6 +573,10 @@ public final class MainActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQUEST_LOCAL_AUDIO) {
+            if (resultCode == RESULT_OK && data != null) handleLocalAudioSelection(data);
+            return;
+        }
         if (requestCode != REQUEST_PLAYLIST_FILE || resultCode != RESULT_OK || data == null || data.getData() == null) return;
         try (InputStream stream = getContentResolver().openInputStream(data.getData());
              BufferedReader reader = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8))) {
@@ -851,6 +877,9 @@ public final class MainActivity extends Activity {
         } else if ("youtube".equals(source)) loadYoutube(query);
         else if ("ytmusic".equals(source)) openYoutubeMusicSearch(query);
         else if ("archive".equals(source)) loadArchive(query);
+        else if ("deezer".equals(source)) loadDeezer(query);
+        else if ("soundcloud".equals(source)) loadSoundCloud(query);
+        else if ("local".equals(source)) loadLocalLibrary();
         else if ("radio".equals(source)) loadRadio(query);
         else loadAudius(query);
     }
@@ -1188,6 +1217,13 @@ public final class MainActivity extends Activity {
         visibleTracks.clear();
         visibleTracks.addAll(tracks);
         resultsList.removeAllViews();
+        if ("local".equals(source)) {
+            Button addLocal = button("＋ Add local audio / FLAC", ACCENT, BG);
+            addLocal.setOnClickListener(v -> chooseLocalAudio());
+            LinearLayout.LayoutParams addLocalLp = new LinearLayout.LayoutParams(-1, dp(44));
+            addLocalLp.bottomMargin = dp(8);
+            resultsList.addView(addLocal, addLocalLp);
+        }
         if (tracks.isEmpty()) {
             TextView empty = text(status, 14, MUTED, false);
             empty.setPadding(dp(8), dp(18), dp(8), dp(18));
@@ -1236,6 +1272,12 @@ public final class MainActivity extends Activity {
                     download.setPadding(0, dp(11), 0, 0);
                     download.setOnClickListener(v -> downloadArchive(track));
                     card.addView(download);
+                }
+                if ("deezer-preview".equals(track.provider)) {
+                    TextView openDeezer = text("↗  Open full track in Deezer", 12, ACCENT, true);
+                    openDeezer.setPadding(0, dp(11), 0, 0);
+                    openDeezer.setOnClickListener(v -> openDeezerTrack(track));
+                    card.addView(openDeezer);
                 }
                 card.setOnClickListener(v -> playTrack(track));
                 LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(-1, -2);
@@ -1504,52 +1546,24 @@ public final class MainActivity extends Activity {
     }
 
     private void beginPlayback(Track track) {
+        if (track.playUrl.isEmpty()) {
+            statusText.setText("No playable stream is available for this result.");
+            return;
+        }
         releasePlayer();
         currentTrack = track;
         paused = false;
         preparing = true;
         nowPlayingText.setText(track.title + " — " + track.artist);
         playPauseButton.setText("…");
-        statusText.setText("Connecting to audio stream…");
+        statusText.setText("Starting background audio…");
+        requestNotificationPermissionIfNeeded();
         try {
-            MediaPlayer next = new MediaPlayer();
-            player = next;
-            next.setAudioAttributes(new AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_MEDIA)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                    .build());
-            next.setOnPreparedListener(mp -> {
-                if (player != mp) return;
-                preparing = false;
-                mp.start();
-                playPauseButton.setText("Ⅱ");
-                statusText.setText("Playing • " + track.subtitle);
-            });
-            next.setOnCompletionListener(mp -> {
-                if (player == mp) {
-                    preparing = false;
-                    paused = false;
-                    playPauseButton.setText("▶");
-                    statusText.setText("Track finished");
-                    if (playbackQueue.size() > 1) main.postDelayed(() -> playNextTrack(), 350L);
-                }
-            });
-            next.setOnErrorListener((mp, what, extra) -> {
-                if (player == mp) {
-                    statusText.setText("Stream failed — try another track");
-                    playPauseButton.setText("▶");
-                    preparing = false;
-                    releasePlayer();
-                }
-                return true;
-            });
-            next.setDataSource(track.playUrl);
-            next.prepareAsync();
+            MusicPlaybackService.play(this, track.playUrl, track.title, track.artist);
         } catch (Exception e) {
-            statusText.setText("Could not start stream: " + shortError(e));
-            playPauseButton.setText("▶");
             preparing = false;
-            releasePlayer();
+            playPauseButton.setText("▶");
+            statusText.setText("Could not start playback: " + shortError(e));
         }
     }
 
@@ -1614,8 +1628,9 @@ public final class MainActivity extends Activity {
                 if (item == null) continue;
                 String provider = item.optString("provider", "");
                 String playUrl = item.optString("playUrl", "");
-                // Keep only HTTP(S) links in persisted favourites; don't restore arbitrary URI schemes.
-                if (!playUrl.isEmpty() && !(playUrl.startsWith("https://") || playUrl.startsWith("http://"))) continue;
+                // Restore only HTTP(S) sources or user-selected local content URIs.
+                if (!playUrl.isEmpty() && !(playUrl.startsWith("https://") || playUrl.startsWith("http://")
+                        || ("local".equals(provider) && playUrl.startsWith("content://")))) continue;
                 tracks.add(new Track(item.optString("id", ""), item.optString("title", ""),
                         item.optString("artist", ""), item.optString("subtitle", ""),
                         provider, playUrl, item.optString("artworkUrl", ""), item.optString("license", "")));
@@ -1640,14 +1655,10 @@ public final class MainActivity extends Activity {
             statusText.setText("Play a result first to start a queue.");
             return;
         }
-        if (player != null && !preparing) {
-            try {
-                if (player.getCurrentPosition() > 3000) {
-                    player.seekTo(0);
-                    statusText.setText("Restarted track");
-                    return;
-                }
-            } catch (Exception ignored) {}
+        if (MusicPlaybackService.currentPosition() > 3000) {
+            MusicPlaybackService.seekToStart();
+            statusText.setText("Restarted track");
+            return;
         }
         playbackQueueIndex = (playbackQueueIndex - 1 + playbackQueue.size()) % playbackQueue.size();
         Track track = playbackQueue.get(playbackQueueIndex);
@@ -1656,31 +1667,15 @@ public final class MainActivity extends Activity {
     }
 
     private void togglePlayback() {
-        if (player == null) {
+        if (!MusicPlaybackService.hasTrack() && currentTrack == null) {
             statusText.setText("Choose a track first.");
             return;
         }
-        if (preparing) {
+        if (MusicPlaybackService.isPreparing()) {
             statusText.setText("Still connecting to the stream…");
             return;
         }
-        try {
-            if (player.isPlaying()) {
-                player.pause();
-                paused = true;
-                playPauseButton.setText("▶");
-                statusText.setText("Paused");
-            } else if (paused) {
-                player.start();
-                paused = false;
-                playPauseButton.setText("Ⅱ");
-                statusText.setText("Playing");
-            } else {
-                statusText.setText("Wait for the stream to connect.");
-            }
-        } catch (IllegalStateException e) {
-            statusText.setText("Player reset. Tap a track to try again.");
-        }
+        MusicPlaybackService.toggle(this);
     }
 
     private JSONObject requestJsonObject(String address) throws Exception {
@@ -1761,14 +1756,8 @@ public final class MainActivity extends Activity {
     }
 
     private void releasePlayer() {
-        if (player != null) {
-            try { player.setOnPreparedListener(null); } catch (Exception ignored) {}
-            try { player.setOnCompletionListener(null); } catch (Exception ignored) {}
-            try { player.setOnErrorListener(null); } catch (Exception ignored) {}
-            try { player.stop(); } catch (Exception ignored) {}
-            try { player.reset(); } catch (Exception ignored) {}
-            try { player.release(); } catch (Exception ignored) {}
-        }
+        // Called when switching away from Spotty-managed audio, not when the Activity exits.
+        MusicPlaybackService.stop(this);
         player = null;
         paused = false;
         preparing = false;
@@ -1776,7 +1765,11 @@ public final class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
-        releasePlayer();
+        // A UI Activity may be destroyed while music continues in the foreground service.
+        if (playbackStateReceiver != null) {
+            try { unregisterReceiver(playbackStateReceiver); } catch (IllegalArgumentException ignored) {}
+            playbackStateReceiver = null;
+        }
         io.shutdownNow();
         main.removeCallbacksAndMessages(null);
         super.onDestroy();
