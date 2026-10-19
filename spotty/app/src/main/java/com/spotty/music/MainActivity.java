@@ -5,6 +5,7 @@ import android.Manifest;
 import android.content.BroadcastReceiver;
 import android.content.IntentFilter;
 import android.content.pm.PackageManager;
+import android.content.pm.ApplicationInfo;
 import android.database.Cursor;
 import android.app.AlertDialog;
 import android.app.DownloadManager;
@@ -41,6 +42,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.BufferedReader;
+import java.io.File;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
@@ -125,6 +127,7 @@ public final class MainActivity extends Activity {
             playPauseButton.setText(MusicPlaybackService.isPlaying() ? "Ⅱ" : "▶");
         }
         loadCurrentSource("");
+        startDebugOnlyPlaybackSmokeIfRequested();
         checkForUpdatesIfDue(false);
     }
 
@@ -1102,6 +1105,29 @@ public final class MainActivity extends Activity {
         }
     }
 
+
+    /**
+     * CI-only integration probe. It is inert in release APKs and accepts no caller-supplied
+     * URL: the only test source is a WAV fixture copied into this app's private files dir.
+     */
+    private void startDebugOnlyPlaybackSmokeIfRequested() {
+        boolean debuggable = (getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0;
+        if (!debuggable || !getIntent().getBooleanExtra("spotty_ci_smoke_playback", false)) return;
+        File fixture = new File(getFilesDir(), "spotty-ci-smoke.wav");
+        if (!fixture.isFile() || !fixture.canRead()) {
+            statusText.setText("CI playback fixture is missing");
+            return;
+        }
+        main.postDelayed(() -> {
+            Track smokeTrack = new Track("ci-smoke", "Spotty playback test", "Local test tone",
+                    "Local WAV • CI smoke test", "local",
+                    fixture.getAbsolutePath(), "", "generated test tone");
+            playbackQueue = new ArrayList<>();
+            playbackQueue.add(smokeTrack);
+            playbackQueueIndex = 0;
+            beginPlayback(smokeTrack);
+        }, 500L);
+    }
 
     private void registerPlaybackStateReceiver() {
         playbackStateReceiver = new BroadcastReceiver() {
