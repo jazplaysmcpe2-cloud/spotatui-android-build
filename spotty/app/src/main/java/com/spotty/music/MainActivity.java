@@ -1348,6 +1348,23 @@ public final class MainActivity extends Activity {
             String name = file.optString("name", "");
             int rank = audioFileRank(name);
             String lowerName = name.toLowerCase(Locale.ROOT);
+            boolean lossless = lowerName.endsWith(".flac") || lowerName.endsWith(".wav")
+                    || lowerName.endsWith(".aiff") || lowerName.endsWith(".alac");
+            if ("Balanced (prefer high bitrate)".equals(activeQuality)) {
+                // Prefer a lossless original; when none exists, rank a verified 320+ kbps file above
+                // lower-bitrate lossy encodes instead of treating every MP3 as high quality.
+                if (lossless) {
+                    rank = 200;
+                } else {
+                    int bitrate = file.optInt("bitrate", 0);
+                    if (bitrate <= 0) {
+                        try { bitrate = Integer.parseInt(file.optString("bitrate", "0").replaceAll("[^0-9]", "")); }
+                        catch (Exception ignored) { bitrate = 0; }
+                    }
+                    if (bitrate >= 320) rank = 160 + Math.min(10, bitrate / 100);
+                    else if (bitrate > 0) rank = 50 + Math.min(60, bitrate / 10);
+                }
+            }
             if (forPlayback && (lowerName.endsWith(".aiff") || lowerName.endsWith(".alac"))) rank = -1;
             long size = file.optLong("size", 0L);
             if (rank < 0) continue;
