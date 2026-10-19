@@ -186,7 +186,7 @@ jobs:
           - YouTube catalog search uses public Invidious instances; selecting a result opens the YouTube link in Morphe YouTube when installed.
           - Imports playlists from CSV, M3U, or pasted title/artist lists; Spotify link alone cannot reveal protected playlist items.
           - Includes source-aware quality selection, licensed Internet Archive downloads, Audius, free internet radio, official Deezer previews, SoundCloud handoff and local audio/FLAC folder imports.
-          - Playback runs in an Android media foreground service with notification controls, audio focus, wake-lock handling and bounded reconnect retries.
+          - Playback runs in an Android media foreground service with notification controls, audio focus, wake-lock handling, capped-backoff remote reconnects, network-return recovery and queue failover for unavailable tracks.
           - Package: com.spotty.music
           - Minimum Android: 8.0 (API 26)
           - Emulator smoke test: passed in this workflow.
