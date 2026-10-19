@@ -381,7 +381,35 @@ if [ -z "$PID" ]; then
   echo "Spotty process disappeared while its media service should have been playing."
   exit 1
 fi
-sleep 2
+echo "[smoke] Locking the emulator display while Spotty should keep playing in its foreground service"
+timeout 15s adb shell input keyevent 26
+sleep 12
+timeout 15s adb shell input keyevent 26
+sleep 22
+timeout 30s adb logcat -d -s SpottyPlaybackService:I > "$SERVICE_LOG"
+HEARTBEATS="$(grep -Fc "playback-heartbeat=playing" "$SERVICE_LOG" || true)"
+if [[ "$HEARTBEATS" -lt 2 ]]; then
+  echo "Background playback did not produce two real-player heartbeats across the screen-off interval."
+  cat "$SERVICE_LOG"
+  exit 1
+fi
+if grep -Fq "playback-state=error" "$SERVICE_LOG"; then
+  echo "Playback entered an error state during the screen-off background soak."
+  cat "$SERVICE_LOG"
+  exit 1
+fi
+timeout 30s adb shell dumpsys activity services com.spotty.music > "$SERVICE_DUMP"
+if ! grep -Eiq 'isForeground=true|foregroundId=7401|foregroundNoti=Notification' "$SERVICE_DUMP"; then
+  echo "The media service left foreground status during the screen-off background soak."
+  cat "$SERVICE_DUMP"
+  exit 1
+fi
+PID="$(timeout 20s adb shell pidof com.spotty.music | tr -d '\\r' || true)"
+if [ -z "$PID" ]; then
+  echo "Spotty process disappeared during screen-off background playback."
+  exit 1
+fi
+echo "[smoke] Screen-off soak passed with $HEARTBEATS live playback heartbeats and foreground service intact."
 timeout 30s adb logcat -d -b main -b system -b events > "$PLAYBACK_LOGCAT"
 if grep -Eiq "FATAL EXCEPTION|ANR in com\\.spotty\\.music|am_anr.*com\\.spotty\\.music|Input dispatching timed out.*com\\.spotty\\.music|Process: com\\.spotty\\.music" "$PLAYBACK_LOGCAT"; then
   echo "Spotty crashed or became unresponsive during background playback."
