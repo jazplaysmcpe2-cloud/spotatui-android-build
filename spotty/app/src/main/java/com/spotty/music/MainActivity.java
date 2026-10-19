@@ -1910,7 +1910,9 @@ public final class MainActivity extends Activity {
         nowPlayingText.setText(track.title + " — " + track.artist);
         playPauseButton.setText("…");
         statusText.setText("Starting background audio…");
-        requestNotificationPermissionIfNeeded();
+        boolean debugPlaybackSmoke = (getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0
+                && getIntent().getBooleanExtra("spotty_ci_smoke_playback", false);
+        if (!debugPlaybackSmoke) requestNotificationPermissionIfNeeded();
         try {
             String backgroundQueue = serializeBackgroundQueue(track);
             MusicPlaybackService.play(this, track.playUrl, track.title, track.artist,
