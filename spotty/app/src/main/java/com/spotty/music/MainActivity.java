@@ -2741,7 +2741,43 @@ public final class MainActivity extends Activity {
             case "Retro CRT": return Color.rgb(127, 255, 91);
             case "Sunset Coast": return Color.rgb(255, 198, 119);
             case "Dark Academia": return Color.rgb(214, 175, 91);
-            default: return Color.rgb(104, 246, 204);
+            default: return Color.rgb(0, 133, 194);
+        }
+    }
+
+    private String themeSymbolFor(String theme) {
+        switch (theme) {
+            case "Frutiger Aero": return "◉";
+            case "Midwest Emo": return "✳";
+            case "Synthwave": return "▥";
+            case "Vaporwave": return "▦";
+            case "Cyberpunk": return "⌁";
+            case "Aurora Forest": return "✦";
+            case "AMOLED": return "◐";
+            case "Y2K Glass": return "◇";
+            case "Candy Pop": return "✿";
+            case "Retro CRT": return "▧";
+            case "Sunset Coast": return "☼";
+            case "Dark Academia": return "✒";
+            default: return "♪";
+        }
+    }
+
+    private int[] themePreviewColors(String theme) {
+        switch (theme) {
+            case "Frutiger Aero": return new int[]{Color.rgb(20, 152, 209), Color.rgb(111, 226, 234), Color.rgb(244, 255, 255)};
+            case "Midwest Emo": return new int[]{Color.rgb(103, 61, 94), Color.rgb(45, 37, 52), Color.rgb(24, 22, 30)};
+            case "Synthwave": return new int[]{Color.rgb(255, 69, 204), Color.rgb(90, 37, 136), Color.rgb(23, 11, 47)};
+            case "Vaporwave": return new int[]{Color.rgb(104, 91, 194), Color.rgb(75, 63, 142), Color.rgb(52, 51, 91)};
+            case "Cyberpunk": return new int[]{Color.rgb(235, 255, 0), Color.rgb(36, 55, 58), Color.rgb(6, 15, 19)};
+            case "Aurora Forest": return new int[]{Color.rgb(91, 214, 160), Color.rgb(22, 88, 69), Color.rgb(6, 27, 27)};
+            case "AMOLED": return new int[]{Color.rgb(133, 235, 158), Color.rgb(20, 20, 25), Color.BLACK};
+            case "Y2K Glass": return new int[]{Color.rgb(244, 255, 255), Color.rgb(127, 184, 226), Color.rgb(40, 57, 112)};
+            case "Candy Pop": return new int[]{Color.rgb(255, 173, 213), Color.rgb(174, 64, 148), Color.rgb(50, 22, 52)};
+            case "Retro CRT": return new int[]{Color.rgb(127, 255, 91), Color.rgb(19, 73, 43), Color.rgb(4, 18, 13)};
+            case "Sunset Coast": return new int[]{Color.rgb(255, 208, 152), Color.rgb(191, 89, 109), Color.rgb(62, 29, 62)};
+            case "Dark Academia": return new int[]{Color.rgb(214, 175, 91), Color.rgb(86, 68, 49), Color.rgb(27, 24, 20)};
+            default: return new int[]{Color.rgb(0, 133, 194), Color.rgb(155, 220, 237), Color.rgb(204, 241, 249)};
         }
     }
 
