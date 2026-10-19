@@ -41,12 +41,18 @@ final class MusicStats {
         String sourceName = sourceName(source);
 
         JSONObject aggregates = parseObject(prefs.getString(AGGREGATES, "{}"));
+        increment(aggregates, "sources", sourceName);
+        boolean liveRadio = "radio".equalsIgnoreCase(clean(source));
+        if (liveRadio) {
+            // A station start is source usage, not a reliably identifiable song play.
+            prefs.edit().putString(AGGREGATES, aggregates.toString()).apply();
+            return;
+        }
         increment(aggregates, "artists", meaningful(cleanArtist) ? cleanArtist : "");
         increment(aggregates, "tracks", meaningful(cleanArtist) ? cleanTitle + " — " + cleanArtist : cleanTitle);
         increment(aggregates, "albums", cleanAlbum);
         increment(aggregates, "genres", cleanGenre);
         increment(aggregates, "playlists", cleanPlaylist);
-        increment(aggregates, "sources", sourceName);
 
         JSONObject days = parseObject(prefs.getString(DAYS, "{}"));
         JSONObject day = days.optJSONObject(date);
@@ -125,7 +131,7 @@ final class MusicStats {
         appendTop(out, "Top tracks", tracks, "No successful track starts recorded yet.");
         appendTop(out, "Top genres", genres, "Genre metadata is not available from every source yet.");
         appendTop(out, "Top sources", sources, "No playable source has started yet.");
-        out.append("Taste overview (on-device pattern summary)\n");
+        out.append("AI-style taste overview (on-device pattern summary)\n");
         out.append(buildTasteOverview(totalPlays, artists, genres, tracks, sources));
         out.append("\n\nAccuracy notes\n");
         out.append("A song is counted when Spotty's MediaPlayer successfully starts it. Listening time accumulates only while that player reports active playback. YouTube, YouTube Music, Spotify and SoundCloud handoffs play in another app, so Spotty cannot count those external sessions without supported account/scrobbling integration. Historical listening before this feature was enabled is not included.");

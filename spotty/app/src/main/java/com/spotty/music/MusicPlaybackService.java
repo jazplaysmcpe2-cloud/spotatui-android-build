@@ -570,7 +570,9 @@ public final class MusicPlaybackService extends Service {
     }
 
     private void accountAndFlushListeningTime() {
-        if (lastStatsTickElapsed > 0L && isPlayerActuallyPlaying()) {
+        // lastStatsTickElapsed is only non-zero while playback was active. Count the
+        // final interval even when MediaPlayer has already transitioned to completion/error.
+        if (lastStatsTickElapsed > 0L) {
             long now = SystemClock.elapsedRealtime();
             if (now >= lastStatsTickElapsed) pendingStatsMs += now - lastStatsTickElapsed;
         }

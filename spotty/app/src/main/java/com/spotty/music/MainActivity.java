@@ -2395,5 +2395,5 @@ public final class MainActivity extends Activity {
             this.genre = genre == null ? "" : genre.trim();
             this.playlist = playlist == null ? "" : playlist.trim();
         }
-    }    }
+    }
 }
