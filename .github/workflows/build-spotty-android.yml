@@ -161,7 +161,7 @@ jobs:
 
       - name: Upload built and tested Spotty APK
         if: always() && hashFiles('release-output/spotty-android-release.apk') != ''
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: spotty-android-apk-${{ github.run_number }}
           path: release-output/
