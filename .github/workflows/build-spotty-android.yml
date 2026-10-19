@@ -94,6 +94,7 @@ jobs:
               release-output/spotty-android-release.apk
             mv "$RUNNER_TEMP/spotty-android-release-signed.apk" release-output/spotty-android-release.apk
             echo "APK signed with the configured persistent release key."
+            PERSISTENT_SIGNING=true
             echo "PERSISTENT_SIGNING=true" >> "$GITHUB_ENV"
           elif [[ "$present" -eq 0 ]]; then
             if [[ "$GITHUB_REF" == "refs/heads/main" && "$GITHUB_EVENT_NAME" != "pull_request" ]]; then
@@ -102,6 +103,7 @@ jobs:
             fi
             cp "$DEBUG_APK" release-output/spotty-android-release.apk
             echo "::warning::Signing secrets absent on a pull-request build; using the debug-signed APK for CI smoke testing only."
+            PERSISTENT_SIGNING=false
             echo "PERSISTENT_SIGNING=false" >> "$GITHUB_ENV"
           else
             echo "::error::Only some Android signing secrets are set. Configure all four or clear all four."
