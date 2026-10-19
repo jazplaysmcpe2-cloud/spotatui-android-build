@@ -1895,6 +1895,18 @@ public final class MainActivity extends Activity {
                 String message = intent.getStringExtra("message");
                 String title = intent.getStringExtra("title");
                 String artist = intent.getStringExtra("artist");
+                if (title != null && !title.isEmpty() && MusicPlaybackService.hasTrack()) {
+                    String playingUrl = MusicPlaybackService.currentUrl();
+                    int matchedIndex = indexOfQueueUrl(playingUrl);
+                    if (matchedIndex >= 0) {
+                        playbackQueueIndex = matchedIndex;
+                        currentTrack = playbackQueue.get(matchedIndex);
+                    } else if (currentTrack == null || !playingUrl.equals(currentTrack.playUrl)) {
+                        currentTrack = new Track("background-playback", title,
+                                artist == null ? "" : artist, "Background audio", "background", playingUrl, "", "");
+                    }
+                    persistUiQueue();
+                }
                 if (title != null && !title.isEmpty() && nowPlayingText != null) {
                     nowPlayingText.setText(title + (artist == null || artist.isEmpty() ? "" : " — " + artist));
                 }
@@ -4152,7 +4164,7 @@ public final class MainActivity extends Activity {
                     ? playbackQueue.get(playbackQueueIndex) : (upcoming.isEmpty() ? null : upcoming.get(0));
             if (anchor != null) upcoming.sort((a, b) -> Integer.compare(smartShuffleScore(b, anchor), smartShuffleScore(a, anchor)));
         }
-        for (int i = start; i < playbackQueue.size(); i++) playbackQueue.remove(i);
+        while (playbackQueue.size() > start) playbackQueue.remove(playbackQueue.size() - 1);
         playbackQueue.addAll(upcoming);
     }
 
