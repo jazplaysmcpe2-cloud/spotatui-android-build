@@ -152,12 +152,56 @@ PY
   return 1
 }
 
+tap_ui_exact() {
+  local target="$1" xml_path="$GITHUB_WORKSPACE/release-output/ui-tap-exact-window.xml"
+  local attempt=1 point="missing"
+  while [ "$attempt" -le 4 ]; do
+    timeout 20s adb shell uiautomator dump /sdcard/spotty-ui-tap-exact.xml >/dev/null 2>&1 || true
+    timeout 20s adb pull /sdcard/spotty-ui-tap-exact.xml "$xml_path" >/dev/null 2>&1 || true
+    point="$(python3 - "$xml_path" "$target" <<'PY'
+import re, sys, xml.etree.ElementTree as ET
+try: nodes = list(ET.parse(sys.argv[1]).getroot().iter("node"))
+except Exception: nodes = []
+target = sys.argv[2].strip().casefold()
+for node in nodes:
+    value = node.attrib.get("text", "").strip().casefold()
+    if value == target:
+        bounds = [int(n) for n in re.findall(r"\d+", node.attrib.get("bounds", ""))]
+        if len(bounds) == 4:
+            print(f"{(bounds[0]+bounds[2])//2},{(bounds[1]+bounds[3])//2}")
+            raise SystemExit(0)
+print("missing")
+PY
+    )"
+    if [[ "$point" =~ ^[0-9]+,[0-9]+$ ]]; then
+      local x y
+      x="${point%,*}"; y="${point#*,}"
+      timeout 15s adb shell input tap "$x" "$y"
+      return 0
+    fi
+    sleep 1
+    attempt=$((attempt + 1))
+  done
+  echo "Could not find exact UI label: $target"
+  cat "$xml_path" 2>/dev/null || true
+  return 1
+}
+
 rail_snapshot_contains() {
   local target="$1"
   local xml_path="$GITHUB_WORKSPACE/release-output/source-rail.xml"
   timeout 20s adb shell uiautomator dump /sdcard/spotty-source-rail.xml >/dev/null 2>&1 || return 1
   timeout 20s adb pull /sdcard/spotty-source-rail.xml "$xml_path" >/dev/null 2>&1 || return 1
-  grep -Fq -- "$target" "$xml_path"
+  python3 - "$xml_path" "$target" <<'PY'
+import sys, xml.etree.ElementTree as ET
+try: nodes = list(ET.parse(sys.argv[1]).getroot().iter("node"))
+except Exception: raise SystemExit(1)
+target = sys.argv[2].strip().casefold()
+for node in nodes:
+    if node.attrib.get("text", "").strip().casefold() == target:
+        raise SystemExit(0)
+raise SystemExit(1)
+PY
 }
 
 scroll_source_rail() {
@@ -169,9 +213,11 @@ scroll_source_rail() {
 import re, sys, xml.etree.ElementTree as ET
 try: nodes = list(ET.parse(sys.argv[1]).getroot().iter("node"))
 except Exception: nodes = []
+labels = {"AUDIUS", "OPEN ARCHIVE", "DEEZER PREVIEWS", "YOUTUBE", "SOUNDCLOUD",
+          "SPOTIFY / SPOTUI", "SOULSEEK", "LOCAL / FLAC", "RADIO"}
 for node in nodes:
-    value = node.attrib.get("text", "").upper()
-    if any(label in value for label in ("AUDIUS", "OPEN ARCHIVE", "DEEZER PREVIEWS", "SOUNDCLOUD", "SPOTIFY / SPOTUI", "SOULSEEK", "LOCAL / FLAC", "RADIO")):
+    value = node.attrib.get("text", "").strip().upper()
+    if value in labels:
         bounds = [int(n) for n in re.findall(r"\d+", node.attrib.get("bounds", ""))]
         if len(bounds) == 4:
             print((bounds[1] + bounds[3]) // 2)
@@ -259,7 +305,8 @@ sleep 2
 timeout 20s adb shell uiautomator dump /sdcard/spotty-unified-search.xml >/dev/null 2>&1
 timeout 20s adb pull /sdcard/spotty-unified-search.xml "$GITHUB_WORKSPACE/release-output/spotty-unified-search.xml" >/dev/null
 grep -Fq "SEARCH RESULTS" "$GITHUB_WORKSPACE/release-output/spotty-unified-search.xml"
-tap_ui_contains "AUDIUS"
+ensure_rail_label_visible "AUDIUS"
+tap_ui_exact "AUDIUS"
 sleep 1
 timeout 20s adb shell uiautomator dump /sdcard/spotty-source-filter.xml >/dev/null 2>&1
 timeout 20s adb pull /sdcard/spotty-source-filter.xml "$GITHUB_WORKSPACE/release-output/spotty-source-filter.xml" >/dev/null
