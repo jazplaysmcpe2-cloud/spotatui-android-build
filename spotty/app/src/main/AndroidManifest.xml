@@ -29,4 +29,9 @@
             </intent-filter>
         </activity>
     </application>
+    <queries>
+        <package android:name="com.music.spotui" />
+        <package android:name="app.morphe.android.youtube" />
+        <package android:name="app.morphe.android.apps.youtube.music" />
+    </queries>
 </manifest>
