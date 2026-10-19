@@ -1,78 +1,60 @@
 # Spotty for Android
 
-Spotty is an independent Android app (package `com.spotty.music`) with its own native UI and player for sources that permit direct streaming. It is not Spotatui and does not use Spotify's API, Spotify Connect, or a Spotify account.
+Spotty is an independent Android music-discovery and listening app (package `com.spotty.music`). The home screen searches multiple public catalogues in one query. Track cards stay inside Spotty; the source is shown quietly in the player rather than acting as a provider-selection screen.
 
-## YouTube via Morphe
+## What can play inside Spotty?
 
-Spotty searches the YouTube catalog through public Invidious instances and hands the selected YouTube link to the Morphe YouTube app (package `app.morphe.android.youtube`). Spotty does **not** extract, download, or redistribute YouTube media streams.
+- **Audius:** searches its public catalogue and streams tracks that the API marks as streamable.
+- **Internet Archive:** searches audio marked as Creative Commons/public-domain. Before playback, Spotty checks item metadata and chooses a supported audio file. Only items with a verifiable open licence are played.
+- **Deezer:** searches the public API and plays the official preview URL when a preview is provided (typically around 30 seconds). The full-track action opens Deezer explicitly.
+- **Local audio:** plays files chosen with Android's document picker, including supported FLAC files. A Soulseek download is played locally after the user imports/selects it.
+- **Internet radio:** playable stations can be searched from the radio collection.
+- **YouTube catalogue:** results are metadata/listing links, not an in-app full-track stream. Tapping a result opens a Spotty player sheet first; only the explicit "Open in YouTube" action hands the link to Morphe/YouTube or a browser. Spotty does not extract, download, or redistribute YouTube media streams.
+- **SoundCloud, Spotify and YouTube Music:** these services do not magically become connected because their apps/websites can be opened. This build does not have an official, authenticated SoundCloud stream/search integration, Spotify catalogue/playback API session, or private YouTube Music history integration. The app does not show a false Connected state.
 
-For background audio on YouTube, install and configure Morphe separately using the official project: https://github.com/MorpheApp/morphe-manager. Morphe patches the YouTube app on the device; it is not a Spotify replacement API. When Morphe isn't installed, Spotty falls back to the Android app/browser that can open YouTube links. Some YouTube content can still require sign-in or have availability restrictions.
+## Search and player behaviour
 
-## Other free sources
+The default search merges available Audius, open-licence Internet Archive, Deezer-preview and public YouTube results. Each network request is independent: one catalogue failing should not prevent other providers from returning results. Results are ordered to prioritise sources that can play in Spotty. When all catalogues fail, the page reports a failure rather than pretending that tracks loaded.
 
-- **Audius:** searchable/trending community music through its public API.
-- **Internet Archive:** searches audio items and checks for a Creative Commons/public-domain license before streaming a supported audio file.
-- **Radio:** searches free internet radio stations.
-
-YouTube catalog searching depends on public Invidious instances, which are third-party community services and can be temporarily unavailable or rate-limited. Spotty includes several documented instances as fallbacks; if none respond, it offers to open the search directly in Morphe/YouTube.
+Track cards show artwork where the catalogue provides it, title, artist and a small source line. Selecting a directly playable source starts the native audio service and opens the full player. Selecting a source that cannot provide a playable in-app stream opens the player sheet without redirecting; the external hand-off is a separate, explicit choice. The player includes artwork, queue, previous/next, pause/resume, seek position when the source supports it, elapsed/duration indicators, and source metadata at the bottom.
 
 ## Background playback and permissions
 
-Native URL and local-file audio playback is owned by a foreground media service, not the Activity. It shows a persistent Android notification with pause/resume and stop controls, requests audio focus, handles headphone/other-app focus changes, uses a partial wake lock while audio is actively playing, and retries a failed stream a limited number of times. The service stores its current source so Android can attempt to restore playback after a process restart.
+The native playback service owns the stream outside the Activity lifecycle. It uses Android's foreground-service/media-playback permissions and notification controls, requests audio focus, acquires a partial wake lock while playing, records listening time, and retries stream failures a limited number of times. Local files are selected with Android's document picker; the app does not request unrestricted storage access.
 
-The app declares Internet access, media-playback foreground-service permissions and WAKE_LOCK. Android 13+ notification permission is requested when the user first starts playback. Local files are selected through Android's document picker / folder picker, so the app does not ask for unrestricted storage access.
+No Android app can guarantee uninterrupted 24/7 playback: the OS may force-stop it, battery management may restrict background activity, and providers can disconnect or remove media. On phones with aggressive battery optimisation, users may need to allow background activity for Spotty.
 
-No Android app can honestly guarantee 24/7 uninterrupted audio: the OS can force-stop an app, battery settings can restrict it, and remote providers can disconnect or remove a track. A persistent notification and bounded reconnection make playback more robust, not infallible. On phones with aggressive battery management, users may need to allow background activity for Spotty.
+## Themes and visual design
 
-## Build and persistent release signing
+The theme selector now uses short art-direction descriptions and preview surfaces rather than a bare list of colour names. The themes include Frutiger Aero, Midwest Emo, Synthwave, Vaporwave, Cyberpunk, Aurora Forest, AMOLED, Y2K Glass, Candy Pop, Retro CRT, Sunset Coast and Dark Academia. The redesigned home, cards, player and settings all use the selected palette and theme-specific surfaces. Theme changes are visual preferences only; they do not change audio quality or provider access.
 
-Requires JDK 17, Android SDK platform 35, Android build tools 35.0.0, and Gradle 8.10.2.
+## Provider credentials and limits
+
+No new credentials are required for the current public APIs. Avoid adding secrets until the matching implementation exists.
+
+- **Spotify:** this separate Spotty app does not currently implement Spotify OAuth or streaming. A Spotify developer Client ID alone would not grant catalogue playback; OAuth scopes, policy-compliant API access and an implemented flow would be required. Spotify's rules do not allow combining Spotify recordings with an unrelated multi-service streaming player.
+- **SoundCloud:** official in-app search/streaming requires using SoundCloud's supported API access and the permissions/tokens available to the app. This build keeps it as a clearly identified external option rather than faking a connection.
+- **Google/YouTube:** public video listings require no Google OAuth client. Account login and private YouTube data would require a separate supported OAuth implementation. Google OAuth does not unlock all YouTube Music listening history.
+- **Last.fm:** account scrobbling needs a Last.fm API account and its authentication flow; merely opening .fmbot does not connect Last.fm.
+- **Soulseek:** it is a peer-to-peer file-sharing network, not a FLAC streaming API. Spotty plays user-selected local files; users must ensure they have rights to those files.
+
+There is no added client ID, redirect URI, OAuth secret or signing credential hard-coded in this app.
+
+## Build and release signing
+
+Requires JDK 17, Android SDK platform 35, Android build-tools 35.0.0 and Gradle 8.10.2.
 
 ```bash
 cd spotty
 gradle --no-daemon :app:assembleDebug :app:assembleRelease
 ```
 
-The public release workflow builds both variants. Pull-request CI can fall back to the debug-signed APK when release secrets are absent; public releases from `main` are blocked unless all four persistent signing secrets are set. Configure these under GitHub **Settings → Secrets and variables → Actions → New repository secret**:
+The GitHub Actions workflow builds both variants and runs an Android emulator smoke test, including a real local WAV playback check through the background service. Pull-request builds may use a debug-signed APK for CI only. Publishing from `main` is blocked unless the same four persistent signing secrets are configured under **GitHub Settings → Secrets and variables → Actions → New repository secret**:
 
-- `ANDROID_KEYSTORE_BASE64`: base64 of the long-term JKS keystore, all one line
-- `ANDROID_KEYSTORE_PASSWORD`: keystore password
-- `ANDROID_KEY_ALIAS`: keystore alias
-- `ANDROID_KEY_PASSWORD`: private-key password
+- `ANDROID_KEYSTORE_BASE64`: base64 of the long-term JKS keystore, on one line.
+- `ANDROID_KEYSTORE_PASSWORD`: keystore password.
+- `ANDROID_KEY_ALIAS`: key alias.
+- `ANDROID_KEY_PASSWORD`: private-key password.
 
-Keep the keystore and values out of the repo, issues, commits, and PR comments. Back up the key securely; losing it prevents normal in-place updates. The previously distributed build 47 was debug-signed, so switching to a different release key means uninstalling that debug build before installing the first persistent-key release (local data may be removed). Subsequent releases must reuse this same key.
+Keep keystores and passwords out of commits, issues, and pull requests. Back up the release key securely: future releases must use the same key to update an installed build. The initial persistent-key release may require uninstalling an older build that used a different debug key.
 
-Once the secrets are set, re-run the Spotty workflow or make a commit to trigger it. The workflow verifies the signed, non-debuggable APK, installs and launches it in an Android emulator, checks the media-service permissions and crash/ANR logs, and publishes a tagged release from `main` only after all gates pass.
-
-## Limitations
-
-- Spotty's YouTube result cards hand playback off to Morphe or the phone's default YouTube handler. It does not stream YouTube audio/video within its own player.
-- Morphe is a separate third-party patching project; install it only from its official project/documentation and review its permissions and patches.
-- Public search instances and streaming providers can change or go offline.
-- No Spotify subscription, Spotify credentials, or Spotify account are needed.
-
-
-## Playlists, audio quality and downloads
-
-Use **Import playlist** to open a CSV/M3U/text playlist or paste track rows. A common Spotify playlist-export CSV with `Track Name` and `Artist Name(s)` columns is supported. A Spotify share URL by itself is not a portable track-list export: Spotify's playlist-items API uses OAuth and has access restrictions. Imported rows are saved locally; selecting a row searches that title/artist on YouTube and hands it to Morphe/YouTube.
-
-## Themes and quality preferences
-
-Themes include Frutiger Aero (default), Midwest Emo, Synthwave, Vaporwave, Cyberpunk, Aurora Forest and AMOLED. Audio quality preferences choose among files the licensed provider offers; they cannot increase an encoded file's quality. Lossless formats or 320 kbps are available only when the actual source file supplies them.
-
-## Download rules
-
-The **Download licensed audio** action appears only on Internet Archive results. Before queueing the download, Spotty checks the item's metadata for a Creative Commons or public-domain license and then downloads the best supported audio file matching your quality preference. It does not download protected Spotify tracks or extract YouTube audio/video.
-
-## Updates
-
-On app launches, Spotty checks its GitHub releases feed and the official Morphe manager releases no more than once every 30 days (or when requested in Settings). It notifies when a new Morphe manager tag appears and links to the official release page. Spotty does not silently patch or replace Morphe/YouTube apps; review and apply patches in Morphe Manager yourself. Android still requires the user to confirm any Spotty APK installation. The build workflow runs monthly on the first day, builds the current default-branch revision, smoke-tests it on an Android API 35 emulator, captures an emulator screenshot, and publishes a release only if all checks pass. Dependabot checks GitHub Actions dependencies monthly.
-
-
-## Music stats and account handoffs
-
-**Music stats** records a play only after Spotty's in-app MediaPlayer successfully starts a track. It measures elapsed time while that player reports active playback, tracks local calendar days, and ranks artists/tracks plus album and genre metadata when a source supplies it. Metrics are stored on-device. The overview is an explainable local pattern summary, not a remote LLM or a personality diagnosis. The screen refreshes around once per second; the playback service checkpoints listened time periodically and on pause/stop rather than polling every millisecond.
-
-Stats describe playback performed by Spotty. Content handed to YouTube, YouTube Music, Spotify, SoundCloud or other external apps cannot be measured from Spotty alone. Album/genre/playlist rankings can be incomplete because sources do not consistently expose this metadata; unavailable rankings are shown as such rather than guessed. Metrics begin when this version first records playback and do not reconstruct old listening automatically.
-
-The **Connect accounts** menu opens official YouTube, YouTube Music, Spotify and .fmbot/Last.fm service pages/apps. These are sign-in entry points, not a claim that Spotty is already OAuth-connected. Spotty currently has no per-user Spotify API token, Google/YouTube OAuth token, or Last.fm/.fmbot integration. In-app synchronization requires registered provider credentials and supported OAuth/API access; .fmbot's documented workflow is based on Last.fm and Discord. YouTube Music does not provide an official general-purpose public account/playback API equivalent, so current supported behavior is external app/site handoff.

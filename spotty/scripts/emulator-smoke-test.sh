@@ -17,6 +17,8 @@ test -s "$SMOKE_APK"
 
 SYSTEM_WARNING_LOG="$GITHUB_WORKSPACE/release-output/emulator-system-warnings.txt"
 WINDOW_XML="$GITHUB_WORKSPACE/release-output/emulator-window.xml"
+HOME_XML="$GITHUB_WORKSPACE/release-output/spotty-home-window.xml"
+PLAYER_XML="$GITHUB_WORKSPACE/release-output/spotty-player-window.xml"
 
 # A no-window Android emulator can occasionally show "Pixel Launcher isn't responding"
 # over a healthy app. Dismiss that system dialog by locating its Wait button through UIAutomator.
@@ -115,6 +117,24 @@ if ! dismiss_launcher_anr_dialog; then
   echo "Unable to dismiss emulator-only launcher dialog; refusing to accept a contaminated screenshot."
   exit 1
 fi
+echo "[smoke] Verifying redesigned discovery home is rendered"
+for home_attempt in 1 2 3; do
+  timeout 20s adb shell uiautomator dump /sdcard/spotty-home-window.xml >/dev/null 2>&1 || true
+  timeout 30s adb pull /sdcard/spotty-home-window.xml "$HOME_XML" >/dev/null 2>&1 || true
+  if grep -Fq "FRESH FINDS" "$HOME_XML" && grep -Fq "Track, artist, mood, or a lyric" "$HOME_XML"; then
+    break
+  fi
+  echo "[smoke] Home accessibility tree was obscured; recovering system dialog (attempt $home_attempt)."
+  dismiss_launcher_anr_dialog || true
+  sleep 1
+done
+grep -Fq "FRESH FINDS" "$HOME_XML"
+grep -Fq "Track, artist, mood, or a lyric" "$HOME_XML"
+if grep -Fq "YouTube • Morphe" "$HOME_XML"; then
+  echo "Legacy provider-selector UI was unexpectedly rendered."
+  exit 1
+fi
+echo "[smoke] Discovery heading, unified search field, and absence of the old provider row verified."
 echo "[smoke] Capturing signed release APK screenshot after system-dialog recovery"
 timeout 20s adb shell screencap -p /sdcard/spotty-smoke-test.png
 timeout 30s adb pull /sdcard/spotty-smoke-test.png "$SCREENSHOT"
@@ -133,7 +153,7 @@ import wave
 
 path = sys.argv[1]
 rate = 44100
-seconds = 16
+seconds = 180
 frames = rate * seconds
 samples = array.array("h", (
     int(1800 * math.sin(2.0 * math.pi * 440.0 * i / rate))
@@ -162,6 +182,21 @@ if ! dismiss_launcher_anr_dialog; then
   echo "Could not clear emulator launcher dialog before background-playback assertions."
   exit 1
 fi
+echo "[smoke] Verifying the real in-app player sheet while the WAV is playing"
+for player_attempt in 1 2 3; do
+  timeout 20s adb shell uiautomator dump /sdcard/spotty-player-window.xml >/dev/null 2>&1 || true
+  timeout 30s adb pull /sdcard/spotty-player-window.xml "$PLAYER_XML" >/dev/null 2>&1 || true
+  if grep -Fq "NOW PLAYING" "$PLAYER_XML"; then break; fi
+  echo "[smoke] Player accessibility tree was obscured; recovering system dialog (attempt $player_attempt)."
+  dismiss_launcher_anr_dialog || true
+  sleep 1
+done
+grep -Fq "NOW PLAYING" "$PLAYER_XML"
+grep -Fq "Spotty playback test" "$PLAYER_XML"
+grep -Fq "SOURCE" "$PLAYER_XML"
+grep -Fq "ON THIS DEVICE" "$PLAYER_XML"
+grep -Fq 'class="android.widget.SeekBar"' "$PLAYER_XML"
+echo "[smoke] Player title, source footer, and seek control are visible."
 timeout 20s adb logcat -d -s SpottyPlaybackService:I > "$SERVICE_LOG"
 if ! grep -Fq "playback-state=playing" "$SERVICE_LOG"; then
   echo "The foreground playback service never reported that the real WAV stream started."

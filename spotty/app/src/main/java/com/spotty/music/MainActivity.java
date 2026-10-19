@@ -8,8 +8,12 @@ import android.content.pm.PackageManager;
 import android.content.pm.ApplicationInfo;
 import android.database.Cursor;
 import android.app.AlertDialog;
+import android.app.Dialog;
 import android.app.DownloadManager;
 import android.graphics.Color;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.drawable.ColorDrawable;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.media.AudioAttributes;
@@ -22,6 +26,8 @@ import android.os.Environment;
 import android.os.Looper;
 import android.view.Gravity;
 import android.view.View;
+import android.view.Window;
+import android.view.WindowManager;
 import android.view.WindowInsets;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
@@ -31,6 +37,9 @@ import android.content.Intent;
 import android.net.Uri;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.FrameLayout;
+import android.widget.SeekBar;
+import android.widget.Toast;
 import android.widget.HorizontalScrollView;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
@@ -78,7 +87,7 @@ public final class MainActivity extends Activity {
 
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ExecutorService io = Executors.newFixedThreadPool(6);
-    private String source = "youtube";
+    private String source = "all";
     private LinearLayout sourceRow;
     private EditText searchField;
     private TextView statusText;
@@ -104,6 +113,38 @@ public final class MainActivity extends Activity {
     private String importedPlaylistName = "Imported playlist";
     private String activeTheme = "Frutiger Aero";
     private String activeQuality = "Best available";
+    private Dialog playerDialog;
+    private Track activePlayerSelection;
+    private ImageView miniArtwork;
+    private ImageView playerArtwork;
+    private TextView playerTitleView;
+    private TextView playerArtistView;
+    private TextView playerSourceView;
+    private TextView playerElapsedView;
+    private TextView playerDurationView;
+    private TextView playerToggleView;
+    private SeekBar playerSeekBar;
+    private boolean playerSeeking;
+    private boolean checkingArchiveLicense;
+    private int allSearchVersion;
+    private final Runnable playerProgressTicker = new Runnable() {
+        @Override public void run() {
+            if (playerDialog == null || !playerDialog.isShowing()) return;
+            int duration = MusicPlaybackService.currentDuration();
+            int position = MusicPlaybackService.currentPosition();
+            if (playerSeekBar != null && !playerSeeking) {
+                playerSeekBar.setMax(Math.max(1, duration));
+                playerSeekBar.setProgress(Math.min(Math.max(0, position), Math.max(1, duration)));
+            }
+            if (playerElapsedView != null) playerElapsedView.setText(formatDuration(Math.max(0, position) / 1000));
+            if (playerDurationView != null) playerDurationView.setText(duration > 0 ? formatDuration(duration / 1000) : "—:—");
+            if (playerToggleView != null) {
+                playerToggleView.setText(checkingArchiveLicense ? "…" :
+                        (needsExternalPlayback(activePlayerSelection) ? "↗" : (MusicPlaybackService.isPlaying() ? "Ⅱ" : "▶")));
+            }
+            main.postDelayed(this, 450L);
+        }
+    };
 
     @Override
     public void onCreate(Bundle state) {
@@ -137,84 +178,85 @@ public final class MainActivity extends Activity {
         LinearLayout screen = new LinearLayout(this);
         screen.setOrientation(LinearLayout.VERTICAL);
         screen.setBackgroundColor(BG);
-        screen.setPadding(dp(18), dp(10), dp(18), dp(8));
-        // Android 15+ enforces edge-to-edge for targetSdk 35. Apply system-bar insets so
-        // the clock/status icons and gesture navigation never overlap the app content.
+        screen.setPadding(dp(18), dp(8), dp(18), dp(7));
         screen.setOnApplyWindowInsetsListener((view, insets) -> {
-            int topInset = insets.getSystemWindowInsetTop();
-            int bottomInset = insets.getSystemWindowInsetBottom();
-            view.setPadding(dp(18), topInset + dp(10), dp(18), bottomInset + dp(8));
+            view.setPadding(dp(18), insets.getSystemWindowInsetTop() + dp(8),
+                    dp(18), insets.getSystemWindowInsetBottom() + dp(7));
             return insets;
         });
 
         LinearLayout header = new LinearLayout(this);
         header.setGravity(Gravity.CENTER_VERTICAL);
-        header.setOrientation(LinearLayout.HORIZONTAL);
-
         ImageView mark = new ImageView(this);
         mark.setImageResource(R.drawable.spotty_app_icon);
         mark.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        header.addView(mark, new LinearLayout.LayoutParams(dp(46), dp(46)));
+        header.addView(mark, new LinearLayout.LayoutParams(dp(48), dp(48)));
 
         LinearLayout titleBlock = new LinearLayout(this);
         titleBlock.setOrientation(LinearLayout.VERTICAL);
         TextView title = text("spotty", 29, TEXT, true);
-        title.setLetterSpacing(-0.03f);
-        TextView subtitle = text("YOUR MUSIC, WITHOUT PREMIUM", 10, MUTED, true);
-        subtitle.setLetterSpacing(0.09f);
+        title.setLetterSpacing(-0.055f);
+        TextView subtitle = text("SOUND FOR THE SIDE QUESTS", 9, MUTED, true);
+        subtitle.setLetterSpacing(0.11f);
         titleBlock.addView(title);
-        titleBlock.addView(subtitle);
-        header.addView(titleBlock, new LinearLayout.LayoutParams(0, -2, 1));
+        LinearLayout subLp = new LinearLayout(this);
+        subLp.setOrientation(LinearLayout.HORIZONTAL);
+        subLp.addView(subtitle);
+        titleBlock.addView(subLp);
+        LinearLayout.LayoutParams titleLp = new LinearLayout.LayoutParams(0, -2, 1);
+        titleLp.leftMargin = dp(8);
+        header.addView(titleBlock, titleLp);
 
-        TextView freePill = text("FREE", 11, ACCENT, true);
-        freePill.setPadding(dp(12), dp(7), dp(12), dp(7));
-        freePill.setBackground(roundRect(PANEL_ALT, 50));
-        header.addView(freePill);
+        TextView settings = text("☷", 24, TEXT, true);
+        settings.setGravity(Gravity.CENTER);
+        settings.setBackground(roundRect(PANEL, 18));
+        settings.setContentDescription("Settings");
+        header.addView(settings, new LinearLayout.LayoutParams(dp(46), dp(46)));
+        settings.setOnClickListener(v -> showSettingsDialog());
         screen.addView(header, new LinearLayout.LayoutParams(-1, -2));
 
-        TextView intro = text("Discover popular sounds and underground finds.", 14, MUTED, false);
-        LinearLayout.LayoutParams introLp = new LinearLayout.LayoutParams(-1, -2);
-        introLp.topMargin = dp(8);
-        introLp.bottomMargin = dp(15);
-        screen.addView(intro, introLp);
-
-        HorizontalScrollView sourceScroller = new HorizontalScrollView(this);
-        sourceScroller.setHorizontalScrollBarEnabled(false);
-        sourceRow = new LinearLayout(this);
-        sourceRow.setOrientation(LinearLayout.HORIZONTAL);
-        sourceRow.addView(sourceButton("YouTube • Morphe", "youtube"));
-        sourceRow.addView(sourceButton("Morphe Music", "ytmusic"));
-        sourceRow.addView(sourceButton("Audius", "audius"));
-        sourceRow.addView(sourceButton("Open Archive", "archive"));
-        sourceRow.addView(sourceButton("Deezer previews", "deezer"));
-        sourceRow.addView(sourceButton("SoundCloud", "soundcloud"));
-        sourceRow.addView(sourceButton("Soulseek / FLAC", "soulseek"));
-        sourceRow.addView(sourceButton("Local FLAC", "local"));
-        sourceRow.addView(sourceButton("Radio", "radio"));
-        sourceRow.addView(sourceButton("Playlists", "playlist"));
-        sourceRow.addView(sourceButton("Liked", "liked"));
-        sourceScroller.addView(sourceRow);
-        screen.addView(sourceScroller, new LinearLayout.LayoutParams(-1, dp(44)));
+        LinearLayout hero = new LinearLayout(this);
+        hero.setOrientation(LinearLayout.VERTICAL);
+        hero.setPadding(dp(20), dp(17), dp(20), dp(18));
+        hero.setBackground(heroDrawable());
+        TextView heroEyebrow = text("A MIXTAPE OUTSIDE THE MAINSTREAM", 9, TEXT, true);
+        heroEyebrow.setLetterSpacing(0.12f);
+        hero.addView(heroEyebrow);
+        TextView headline = text(themeHeadline(), 25, TEXT, true);
+        headline.setLetterSpacing(-0.025f);
+        headline.setMaxLines(2);
+        LinearLayout.LayoutParams headlineLp = new LinearLayout.LayoutParams(-1, -2);
+        headlineLp.topMargin = dp(10);
+        hero.addView(headline, headlineLp);
+        TextView direction = text(themeNarrative(), 12, MUTED, false);
+        LinearLayout.LayoutParams directionLp = new LinearLayout.LayoutParams(-1, -2);
+        directionLp.topMargin = dp(8);
+        hero.addView(direction, directionLp);
+        LinearLayout.LayoutParams heroLp = new LinearLayout.LayoutParams(-1, -2);
+        heroLp.topMargin = dp(13);
+        screen.addView(hero, heroLp);
 
         LinearLayout searchRow = new LinearLayout(this);
         searchRow.setGravity(Gravity.CENTER_VERTICAL);
-        searchRow.setOrientation(LinearLayout.HORIZONTAL);
         searchField = new EditText(this);
         searchField.setSingleLine(true);
         searchField.setTextColor(TEXT);
         searchField.setHintTextColor(MUTED);
-        searchField.setHint("Artists, tracks, genres…");
-        searchField.setTextSize(15);
+        searchField.setHint("Track, artist, mood, or a lyric…");
+        searchField.setTextSize(14);
         searchField.setImeOptions(EditorInfo.IME_ACTION_SEARCH);
-        searchField.setPadding(dp(14), 0, dp(10), 0);
-        searchField.setBackground(roundRect(PANEL, 16));
-        LinearLayout.LayoutParams inputLp = new LinearLayout.LayoutParams(0, dp(49), 1);
+        searchField.setPadding(dp(15), 0, dp(8), 0);
+        searchField.setBackground(roundRect(PANEL, 17));
+        LinearLayout.LayoutParams inputLp = new LinearLayout.LayoutParams(0, dp(51), 1);
         inputLp.rightMargin = dp(8);
         searchRow.addView(searchField, inputLp);
 
-        Button search = button("Search", ACCENT, BG);
+        TextView search = text("↗", 23, BG, true);
+        search.setGravity(Gravity.CENTER);
+        search.setBackground(roundRect(ACCENT, 17));
+        search.setContentDescription("Search all sources");
+        searchRow.addView(search, new LinearLayout.LayoutParams(dp(54), dp(51)));
         search.setOnClickListener(v -> submitSearch());
-        searchRow.addView(search, new LinearLayout.LayoutParams(dp(88), dp(49)));
         searchField.setOnEditorActionListener((v, actionId, event) -> {
             if (actionId == EditorInfo.IME_ACTION_SEARCH) {
                 submitSearch();
@@ -226,61 +268,44 @@ public final class MainActivity extends Activity {
         searchLp.topMargin = dp(12);
         screen.addView(searchRow, searchLp);
 
-        LinearLayout utilityRow = new LinearLayout(this);
-        utilityRow.setOrientation(LinearLayout.HORIZONTAL);
-        utilityRow.setGravity(Gravity.CENTER_VERTICAL);
-        String[] utilityLabels = {"Import playlist", "Themes", "Settings"};
-        View.OnClickListener[] utilityActions = {
-                v -> showPlaylistImportDialog(),
-                v -> showThemeDialog(),
-                v -> showSettingsDialog()
-        };
-        for (int i = 0; i < utilityLabels.length; i++) {
-            Button utility = button(utilityLabels[i], PANEL_ALT, TEXT);
-            utility.setTextSize(11);
-            utility.setOnClickListener(utilityActions[i]);
-            LinearLayout.LayoutParams utilityLp = new LinearLayout.LayoutParams(0, dp(40), 1);
-            utilityLp.rightMargin = i < utilityLabels.length - 1 ? dp(7) : 0;
-            utilityRow.addView(utility, utilityLp);
-        }
-        LinearLayout.LayoutParams utilityLp = new LinearLayout.LayoutParams(-1, -2);
-        utilityLp.topMargin = dp(8);
-        screen.addView(utilityRow, utilityLp);
-
         HorizontalScrollView genreScroll = new HorizontalScrollView(this);
         genreScroll.setHorizontalScrollBarEnabled(false);
         LinearLayout genres = new LinearLayout(this);
         genres.setOrientation(LinearLayout.HORIZONTAL);
-        for (String genre : new String[]{"shoegaze", "dream pop", "ambient", "post-rock", "indie", "electronic", "hip-hop"}) {
-            TextView chip = text(genre, 12, TEXT, false);
-            chip.setPadding(dp(12), dp(8), dp(12), dp(8));
-            chip.setBackground(roundRect(PANEL_ALT, 18));
+        String[] moods = {"shoegaze", "dream pop", "post-rock", "ambient", "indie", "night drive", "slowcore"};
+        for (String mood : moods) {
+            TextView chip = text(mood, 11, TEXT, true);
+            chip.setPadding(dp(13), dp(9), dp(13), dp(9));
+            chip.setBackground(roundRect(PANEL_ALT, 17));
             LinearLayout.LayoutParams chipLp = new LinearLayout.LayoutParams(-2, -2);
             chipLp.rightMargin = dp(7);
             chip.setOnClickListener(v -> {
-                searchField.setText(genre);
-                source = "youtube";
-                refreshSourceButtons(sourceRow);
-                loadYoutube(genre);
+                searchField.setText(mood);
+                source = "all";
+                loadAllSources(mood);
             });
             genres.addView(chip, chipLp);
         }
         genreScroll.addView(genres);
         LinearLayout.LayoutParams genreLp = new LinearLayout.LayoutParams(-1, -2);
         genreLp.topMargin = dp(10);
-        genreLp.bottomMargin = dp(13);
         screen.addView(genreScroll, genreLp);
 
         LinearLayout statusRow = new LinearLayout(this);
         statusRow.setGravity(Gravity.CENTER_VERTICAL);
-        statusRow.setOrientation(LinearLayout.HORIZONTAL);
-        resultHeading = text("DISCOVER", 11, ACCENT, true);
-        resultHeading.setLetterSpacing(0.13f);
-        statusRow.addView(resultHeading, new LinearLayout.LayoutParams(-2, -2));
-        statusText = text("Connecting…", 12, MUTED, false);
+        TextView sectionMark = text("✳", 14, ACCENT, true);
+        sectionMark.setPadding(0, 0, dp(7), 0);
+        statusRow.addView(sectionMark);
+        resultHeading = text("FRESH FINDS", 11, TEXT, true);
+        resultHeading.setLetterSpacing(0.09f);
+        statusRow.addView(resultHeading, new LinearLayout.LayoutParams(0, -2, 1));
+        statusText = text("Finding the good stuff…", 10, MUTED, false);
         statusText.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
-        statusRow.addView(statusText, new LinearLayout.LayoutParams(0, -2, 1));
-        screen.addView(statusRow, new LinearLayout.LayoutParams(-1, dp(29)));
+        statusText.setMaxLines(1);
+        statusRow.addView(statusText, new LinearLayout.LayoutParams(-2, -2));
+        LinearLayout.LayoutParams statusLp = new LinearLayout.LayoutParams(-1, dp(31));
+        statusLp.topMargin = dp(5);
+        screen.addView(statusRow, statusLp);
 
         ScrollView resultScroller = new ScrollView(this);
         resultScroller.setFillViewport(false);
@@ -288,52 +313,87 @@ public final class MainActivity extends Activity {
         resultsList = new LinearLayout(this);
         resultsList.setOrientation(LinearLayout.VERTICAL);
         LinearLayout.LayoutParams resultsLp = new LinearLayout.LayoutParams(-1, 0, 1);
-        resultsLp.topMargin = dp(4);
+        resultsLp.topMargin = dp(2);
         screen.addView(resultScroller, resultsLp);
         resultScroller.addView(resultsList);
 
         LinearLayout mini = new LinearLayout(this);
         mini.setGravity(Gravity.CENTER_VERTICAL);
         mini.setOrientation(LinearLayout.HORIZONTAL);
-        mini.setPadding(dp(13), dp(9), dp(10), dp(9));
-        mini.setBackground(roundRect(PANEL, 17));
-        LinearLayout miniText = new LinearLayout(this);
-        miniText.setOrientation(LinearLayout.VERTICAL);
-        TextView miniLabel = text("NOW PLAYING", 9, ACCENT, true);
-        miniLabel.setLetterSpacing(0.1f);
-        nowPlayingText = text("Pick a track to start", 13, TEXT, true);
+        mini.setPadding(dp(10), dp(9), dp(10), dp(9));
+        mini.setBackground(panelCardDrawable());
+        FrameLayout miniCover = new FrameLayout(this);
+        miniCover.setBackground(coverBackdrop(null));
+        miniCover.setClipToOutline(true);
+        TextView miniGlyph = text("◉", 27, TEXT, true);
+        miniGlyph.setGravity(Gravity.CENTER);
+        miniCover.addView(miniGlyph, new FrameLayout.LayoutParams(-1, -1));
+        miniArtwork = new ImageView(this);
+        miniArtwork.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        miniArtwork.setBackground(roundRect(PANEL_ALT, 12));
+        miniArtwork.setClipToOutline(true);
+        miniCover.addView(miniArtwork, new FrameLayout.LayoutParams(-1, -1));
+        miniArtwork.setImageResource(R.drawable.spotty_app_icon);
+        mini.addView(miniCover, new LinearLayout.LayoutParams(dp(51), dp(51)));
+
+        LinearLayout miniTextBlock = new LinearLayout(this);
+        miniTextBlock.setOrientation(LinearLayout.VERTICAL);
+        miniTextBlock.setPadding(dp(10), 0, dp(5), 0);
+        TextView miniLabel = text("ON THE TURNTABLE", 8, ACCENT, true);
+        miniLabel.setLetterSpacing(0.11f);
+        miniTextBlock.addView(miniLabel);
+        nowPlayingText = text("Pick a sound to begin", 12, TEXT, true);
         nowPlayingText.setMaxLines(1);
-        miniText.addView(miniLabel);
-        LinearLayout.LayoutParams nowLp = new LinearLayout.LayoutParams(-1, -2);
-        nowLp.topMargin = dp(3);
-        miniText.addView(nowPlayingText, nowLp);
-        mini.addView(miniText, new LinearLayout.LayoutParams(0, -2, 1));
+        TextView miniHint = text("Tap to open the player", 10, MUTED, false);
+        LinearLayout.LayoutParams hintLp = new LinearLayout.LayoutParams(-1, -2);
+        hintLp.topMargin = dp(3);
+        miniTextBlock.addView(nowPlayingText, new LinearLayout.LayoutParams(-1, -2));
+        miniTextBlock.addView(miniHint, hintLp);
+        mini.addView(miniTextBlock, new LinearLayout.LayoutParams(0, -2, 1));
+        miniTextBlock.setOnClickListener(v -> {
+            if (currentTrack != null) showPlayerDialog(currentTrack);
+            else loadAllSources(searchField.getText().toString().trim());
+        });
+        miniCover.setOnClickListener(v -> {
+            if (currentTrack != null) showPlayerDialog(currentTrack);
+            else loadAllSources(searchField.getText().toString().trim());
+        });
 
-        previousTrackButton = text("⏮", 16, TEXT, true);
-        previousTrackButton.setGravity(Gravity.CENTER);
-        previousTrackButton.setBackground(roundRect(PANEL_ALT, 50));
-        previousTrackButton.setOnClickListener(v -> playPreviousTrack());
-        LinearLayout.LayoutParams previousLp = new LinearLayout.LayoutParams(dp(38), dp(38));
-        previousLp.rightMargin = dp(5);
-        mini.addView(previousTrackButton, previousLp);
-
-        playPauseButton = text("▶", 22, ACCENT, true);
+        playPauseButton = text("▶", 21, BG, true);
         playPauseButton.setGravity(Gravity.CENTER);
-        playPauseButton.setBackground(roundRect(PANEL_ALT, 50));
+        playPauseButton.setBackground(roundRect(ACCENT, 50));
+        playPauseButton.setContentDescription("Play or pause");
         playPauseButton.setOnClickListener(v -> togglePlayback());
-        mini.addView(playPauseButton, new LinearLayout.LayoutParams(dp(42), dp(42)));
-
-        nextTrackButton = text("⏭", 16, TEXT, true);
-        nextTrackButton.setGravity(Gravity.CENTER);
-        nextTrackButton.setBackground(roundRect(PANEL_ALT, 50));
-        nextTrackButton.setOnClickListener(v -> playNextTrack());
-        LinearLayout.LayoutParams nextLp = new LinearLayout.LayoutParams(dp(38), dp(38));
-        nextLp.leftMargin = dp(5);
-        mini.addView(nextTrackButton, nextLp);
-
+        mini.addView(playPauseButton, new LinearLayout.LayoutParams(dp(43), dp(43)));
+        mini.setOnClickListener(v -> {
+            if (currentTrack != null) showPlayerDialog(currentTrack);
+            else loadAllSources(searchField.getText().toString().trim());
+        });
         LinearLayout.LayoutParams miniLp = new LinearLayout.LayoutParams(-1, -2);
         miniLp.topMargin = dp(8);
         screen.addView(mini, miniLp);
+
+        LinearLayout nav = new LinearLayout(this);
+        nav.setGravity(Gravity.CENTER);
+        nav.setPadding(0, dp(6), 0, 0);
+        TextView discoverTab = text("⌂  DISCOVER", 10, ACCENT, true);
+        TextView libraryTab = text("♡  LIBRARY", 10, MUTED, true);
+        TextView settingsTab = text("☷  SETTINGS", 10, MUTED, true);
+        for (TextView tab : new TextView[]{discoverTab, libraryTab, settingsTab}) {
+            tab.setGravity(Gravity.CENTER);
+            tab.setPadding(dp(9), dp(9), dp(9), dp(9));
+            nav.addView(tab, new LinearLayout.LayoutParams(0, dp(40), 1));
+        }
+        discoverTab.setOnClickListener(v -> {
+            source = "all";
+            discoverTab.setTextColor(ACCENT);
+            libraryTab.setTextColor(MUTED);
+            searchField.setHint("Track, artist, mood, or a lyric…");
+            loadAllSources(searchField.getText().toString().trim());
+        });
+        libraryTab.setOnClickListener(v -> showLibraryDialog());
+        settingsTab.setOnClickListener(v -> showSettingsDialog());
+        screen.addView(nav, new LinearLayout.LayoutParams(-1, -2));
 
         setContentView(screen);
     }
@@ -357,6 +417,7 @@ public final class MainActivity extends Activity {
     }
 
     private void refreshSourceButtons(LinearLayout row) {
+        if (row == null) return;
         for (int i = 0; i < row.getChildCount(); i++) {
             View child = row.getChildAt(i);
             if (!(child instanceof TextView)) continue;
@@ -426,31 +487,163 @@ public final class MainActivity extends Activity {
     }
 
     private void showThemeDialog() {
-        int selected = 0;
-        for (int i = 0; i < THEME_NAMES.length; i++) if (THEME_NAMES[i].equals(activeTheme)) selected = i;
-        new AlertDialog.Builder(this)
-                .setTitle("Choose your Spotty universe")
-                .setSingleChoiceItems(THEME_NAMES, selected, (dialog, which) -> {
-                    getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString("theme", THEME_NAMES[which]).apply();
-                    dialog.dismiss();
-                    recreate();
-                })
-                .setNegativeButton("Cancel", null)
-                .show();
+        Dialog dialog = new Dialog(this);
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setBackgroundColor(BG);
+        root.setPadding(dp(20), dp(16), dp(20), dp(18));
+        LinearLayout heading = new LinearLayout(this);
+        heading.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout copy = new LinearLayout(this);
+        copy.setOrientation(LinearLayout.VERTICAL);
+        TextView title = text("Choose your world", 24, TEXT, true);
+        TextView subtitle = text("Each theme changes the mood, texture and colour language.", 11, MUTED, false);
+        LinearLayout.LayoutParams subtitleLp = new LinearLayout.LayoutParams(-1, -2);
+        subtitleLp.topMargin = dp(5);
+        copy.addView(title);
+        copy.addView(subtitle, subtitleLp);
+        heading.addView(copy, new LinearLayout.LayoutParams(0, -2, 1));
+        TextView close = text("×", 27, TEXT, true);
+        close.setGravity(Gravity.CENTER);
+        close.setBackground(roundRect(PANEL, 50));
+        heading.addView(close, new LinearLayout.LayoutParams(dp(42), dp(42)));
+        close.setOnClickListener(v -> dialog.dismiss());
+        root.addView(heading, new LinearLayout.LayoutParams(-1, -2));
+
+        ScrollView scroller = new ScrollView(this);
+        scroller.setVerticalScrollBarEnabled(false);
+        LinearLayout list = new LinearLayout(this);
+        list.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams listLp = new LinearLayout.LayoutParams(-1, -2);
+        listLp.topMargin = dp(15);
+        root.addView(scroller, new LinearLayout.LayoutParams(-1, 0, 1));
+        scroller.addView(list);
+        for (String name : THEME_NAMES) {
+            LinearLayout row = new LinearLayout(this);
+            row.setGravity(Gravity.CENTER_VERTICAL);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setPadding(dp(11), dp(11), dp(11), dp(11));
+            int preview = themeAccentFor(name);
+            GradientDrawable previewBg = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
+                    new int[]{preview, blendColor(preview, BG, 0.55f), BG});
+            previewBg.setCornerRadius(dp("Retro CRT".equals(name) ? 5 : 17));
+            if (name.equals(activeTheme)) previewBg.setStroke(dp(2), TEXT);
+            row.setBackground(name.equals(activeTheme) ? previewBg : panelCardDrawable());
+            TextView icon = text("◉", 24, TEXT, true);
+            icon.setGravity(Gravity.CENTER);
+            icon.setBackground(previewBg);
+            row.addView(icon, new LinearLayout.LayoutParams(dp(48), dp(48)));
+            LinearLayout labelBlock = new LinearLayout(this);
+            labelBlock.setOrientation(LinearLayout.VERTICAL);
+            TextView label = text(name, 13, TEXT, true);
+            TextView blurb = text(themeNarrativeFor(name), 10, MUTED, false);
+            blurb.setMaxLines(2);
+            labelBlock.addView(label);
+            LinearLayout.LayoutParams blurbLp = new LinearLayout.LayoutParams(-1, -2);
+            blurbLp.topMargin = dp(4);
+            labelBlock.addView(blurb, blurbLp);
+            LinearLayout.LayoutParams labelLp = new LinearLayout.LayoutParams(0, -2, 1);
+            labelLp.leftMargin = dp(12);
+            row.addView(labelBlock, labelLp);
+            TextView selected = text(name.equals(activeTheme) ? "✓" : "›", 18,
+                    name.equals(activeTheme) ? ACCENT : MUTED, true);
+            row.addView(selected);
+            LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(-1, -2);
+            rowLp.bottomMargin = dp(8);
+            list.addView(row, rowLp);
+            row.setOnClickListener(v -> {
+                getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString("theme", name).apply();
+                dialog.dismiss();
+                recreate();
+            });
+        }
+        dialog.setContentView(root);
+        dialog.setCancelable(true);
+        dialog.show();
+        Window window = dialog.getWindow();
+        if (window != null) {
+            window.setBackgroundDrawable(new ColorDrawable(BG));
+            window.setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT);
+        }
+    }
+
+    private String themeNarrativeFor(String name) {
+        switch (name) {
+            case "Midwest Emo": return "Bedroom shows, diary pages, worn guitar strings";
+            case "Synthwave": return "Neon, chrome, night-drive silhouettes";
+            case "Vaporwave": return "Pastel digital decay and dream logic";
+            case "Cyberpunk": return "Hard contrast, signal noise, electric edge";
+            case "Aurora Forest": return "Bioluminescent greens and organic shapes";
+            case "AMOLED": return "Near-black canvas with precise highlights";
+            case "Y2K Glass": return "Liquid glass, chrome reflections, soft glow";
+            case "Candy Pop": return "Playful stickers and loud editorial colour";
+            case "Retro CRT": return "Terminal green, hard corners, broadcast grit";
+            case "Sunset Coast": return "Warm haze, soft edges, late-afternoon grain";
+            case "Dark Academia": return "Ink, antique gold, paper and carved detail";
+            default: return "Translucent water, cool gradients, bright glass";
+        }
     }
 
     private void showSettingsDialog() {
-        new AlertDialog.Builder(this)
-                .setTitle("Spotty settings")
-                .setItems(new String[]{"Audio quality preference", "Music stats", "Connect accounts", "Check for updates now", "About Spotty"}, (dialog, which) -> {
-                    if (which == 0) showQualityDialog();
-                    else if (which == 1) showMusicStatsDialog();
-                    else if (which == 2) showConnectionsDialog();
-                    else if (which == 3) checkForUpdatesIfDue(true);
-                    else new AlertDialog.Builder(this).setTitle("Spotty")
-                            .setMessage("A source-first music and video discovery app. YouTube playback is handed to Morphe/YouTube. Spotify, Google/YouTube and Last.fm account data are not yet linked to Spotty through OAuth. Spotty never claims to unlock Spotify Premium or upsample audio beyond source quality.")
-                            .setPositiveButton("Done", null).show();
-                }).show();
+        Dialog dialog = new Dialog(this);
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setBackgroundColor(BG);
+        root.setPadding(dp(20), dp(16), dp(20), dp(18));
+        LinearLayout heading = new LinearLayout(this);
+        heading.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout titleBlock = new LinearLayout(this);
+        titleBlock.setOrientation(LinearLayout.VERTICAL);
+        TextView kicker = text("YOUR LISTENING SPACE", 9, ACCENT, true);
+        kicker.setLetterSpacing(0.12f);
+        TextView title = text("Settings", 28, TEXT, true);
+        titleBlock.addView(kicker);
+        LinearLayout.LayoutParams titleLp = new LinearLayout.LayoutParams(-1, -2);
+        titleLp.topMargin = dp(4);
+        titleBlock.addView(title, titleLp);
+        heading.addView(titleBlock, new LinearLayout.LayoutParams(0, -2, 1));
+        TextView close = text("×", 27, TEXT, true);
+        close.setGravity(Gravity.CENTER);
+        close.setBackground(roundRect(PANEL, 50));
+        heading.addView(close, new LinearLayout.LayoutParams(dp(42), dp(42)));
+        close.setOnClickListener(v -> dialog.dismiss());
+        root.addView(heading);
+
+        ScrollView scroller = new ScrollView(this);
+        scroller.setVerticalScrollBarEnabled(false);
+        LinearLayout rows = new LinearLayout(this);
+        rows.setOrientation(LinearLayout.VERTICAL);
+        scroller.addView(rows);
+        LinearLayout.LayoutParams scrollLp = new LinearLayout.LayoutParams(-1, 0, 1);
+        scrollLp.topMargin = dp(17);
+        root.addView(scroller, scrollLp);
+
+        addSettingsRow(rows, "✧", "Appearance & themes", activeTheme + " · art direction, contrast and surfaces", this::showThemeDialog);
+        addSettingsRow(rows, "♫", "Playback quality", activeQuality + " · uses what each source actually provides", this::showQualityDialog);
+        addSettingsRow(rows, "◷", "Listening stats", "Time listened, track starts and top artists on this device", this::showMusicStatsDialog);
+        addSettingsRow(rows, "⇄", "Account connections", "Provider sign-in status and requirements", this::showConnectionsDialog);
+        addSettingsRow(rows, "▤", "Playlist import", "CSV, M3U or pasted track lists", this::showPlaylistImportDialog);
+        addSettingsRow(rows, "↻", "App updates", "Check the latest Spotty Android release", () -> checkForUpdatesIfDue(true));
+        addSettingsRow(rows, "ⓘ", "About Spotty", "What plays here, what opens elsewhere, and why", () ->
+                new AlertDialog.Builder(this).setTitle("About Spotty")
+                        .setMessage("Spotty searches several public catalogues together. Audius streams full public tracks, Internet Archive playback is checked for an open licence, Deezer supplies official previews, and local files play directly. YouTube listings need an explicit hand-off because this app has no supported YouTube audio-stream API. Spotify and SoundCloud credentials are not fabricated or silently marked as connected.")
+                        .setPositiveButton("Done", null).show());
+        TextView foot = text("No pretend logins. No invented quality. No automatic source hand-offs.", 10, MUTED, false);
+        foot.setGravity(Gravity.CENTER);
+        foot.setPadding(dp(6), dp(12), dp(6), dp(8));
+        root.addView(foot, new LinearLayout.LayoutParams(-1, -2));
+
+        dialog.setContentView(root);
+        dialog.setCancelable(true);
+        dialog.show();
+        Window window = dialog.getWindow();
+        if (window != null) {
+            window.setBackgroundDrawable(new ColorDrawable(BG));
+            window.setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT);
+            window.setStatusBarColor(BG);
+            window.setNavigationBarColor(BG);
+            window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
+        }
     }
 
     private void showMusicStatsDialog() {
@@ -983,11 +1176,209 @@ public final class MainActivity extends Activity {
         String query = searchField.getText().toString().trim();
         ((InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE))
                 .hideSoftInputFromWindow(searchField.getWindowToken(), 0);
-        loadCurrentSource(query);
+        source = "all";
+        loadAllSources(query);
+    }
+
+    private void loadAllSources(String query) {
+        loadAllSources(query, false);
+    }
+
+    private void loadAllSources(String query, boolean retryAttempt) {
+        final String q = query == null ? "" : query.trim();
+        source = "all";
+        final int version = ++allSearchVersion;
+        youtubeSearchVersion++;
+        resultHeading.setText(q.isEmpty() ? "FRESH FINDS" : "SEARCH RESULTS");
+        setLoading(q.isEmpty() ? "Tuning into four catalogues…" : "Searching across sources…");
+        resultsList.removeAllViews();
+
+        CompletionService<List<Track>> completed = new ExecutorCompletionService<>(io);
+        List<Future<List<Track>>> requests = new ArrayList<>();
+        requests.add(completed.submit(() -> searchAudiusCatalogue(q)));
+        requests.add(completed.submit(() -> searchArchiveCatalogue(q)));
+        requests.add(completed.submit(() -> searchDeezerCatalogue(q)));
+        requests.add(completed.submit(() -> searchYoutubeCatalogue(q)));
+
+        // Snapshot local results on the UI thread, then merge network catalogues off-thread.
+        List<Track> localSnapshot = new ArrayList<>();
+        for (Track t : localTracks) {
+            String haystack = (t.title + " " + t.artist + " " + t.album).toLowerCase(Locale.ROOT);
+            if (q.isEmpty() || haystack.contains(q.toLowerCase(Locale.ROOT))) localSnapshot.add(t);
+        }
+        io.execute(() -> {
+            List<Track> merged = new ArrayList<>(localSnapshot);
+            int responsive = 0;
+            int finished = 0;
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(24);
+            while (finished < requests.size()) {
+                long remaining = deadline - System.nanoTime();
+                if (remaining <= 0L) break;
+                try {
+                    Future<List<Track>> task = completed.poll(remaining, TimeUnit.NANOSECONDS);
+                    if (task == null) break;
+                    finished++;
+                    try {
+                        List<Track> found = task.get();
+                        if (found != null) {
+                            responsive++;
+                            merged.addAll(found);
+                        }
+                    } catch (Exception ignored) {
+                        // One provider failing must not hide results from the other catalogues.
+                    }
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+            for (Future<List<Track>> task : requests) if (!task.isDone()) task.cancel(true);
+            // Put direct, in-app streams first. Non-playable YouTube listings remain accessible,
+            // but only through an explicit action in the player sheet.
+            merged.sort((a, b) -> Integer.compare(playbackRank(a), playbackRank(b)));
+            if (merged.size() > 80) merged = new ArrayList<>(merged.subList(0, 80));
+            final List<Track> finalTracks = merged;
+            final int sourcesOk = responsive;
+            main.post(() -> {
+                if (version != allSearchVersion || !"all".equals(source)) return;
+                if (sourcesOk == 0 && !retryAttempt) {
+                    String retrying = "No catalogue responded • retrying once…";
+                    showTracks(finalTracks, retrying);
+                    statusText.setText(retrying);
+                    // Mobile/emulator networks can finish connecting just after launch. Retry once
+                    // rather than leaving a fresh install stuck on an empty catalogue screen.
+                    main.postDelayed(() -> {
+                        if (version == allSearchVersion && "all".equals(source)) {
+                            loadAllSources(q, true);
+                        }
+                    }, 1500L);
+                    return;
+                }
+                String status = finalTracks.size() + " finds • " + sourcesOk + "/4 catalogues online";
+                if (sourcesOk == 0) status = "Catalogues unavailable • check connection and retry";
+                showTracks(finalTracks, status);
+                if (sourcesOk == 0 && statusText != null) statusText.setText(status);
+            });
+        });
+    }
+
+    private int playbackRank(Track track) {
+        if (track == null) return 5;
+        if ("audius".equals(track.provider)) return 0;
+        if ("deezer-preview".equals(track.provider)) return 1;
+        if ("archive".equals(track.provider) || "archive-playable".equals(track.provider)) return 2;
+        if ("local".equals(track.provider)) return 0;
+        if ("radio".equals(track.provider)) return 2;
+        return 4;
+    }
+
+    private List<Track> searchAudiusCatalogue(String query) throws Exception {
+        String endpoint = query.isEmpty()
+                ? "https://api.audius.co/v1/tracks/trending?limit=24&filter_tracks=public&gate_condition=ungated"
+                : "https://api.audius.co/v1/tracks/search?query=" + enc(query)
+                        + "&limit=24&filter_tracks=public&gate_condition=ungated";
+        JSONObject response = requestJsonObject(endpoint);
+        JSONArray data = response.optJSONArray("data");
+        if (data == null) throw new Exception("Audius returned no track list");
+        List<Track> found = new ArrayList<>();
+        for (int i = 0; i < data.length(); i++) {
+            JSONObject item = data.optJSONObject(i);
+            if (item == null || !item.optBoolean("is_streamable", true)) continue;
+            String id = item.optString("id", "");
+            if (id.isEmpty()) continue;
+            String title = item.optString("title", "Untitled track");
+            JSONObject user = item.optJSONObject("user");
+            String artist = user == null ? "Audius artist" : user.optString("name", "Audius artist");
+            JSONObject artwork = item.optJSONObject("artwork");
+            String art = artwork == null ? "" : artwork.optString("150x150", "");
+            String genre = item.optString("genre", "");
+            found.add(new Track(id, title, artist, "Audius", "audius",
+                    "https://api.audius.co/v1/tracks/" + Uri.encode(id) + "/stream", art, "", "", genre, ""));
+        }
+        return found;
+    }
+
+    private List<Track> searchDeezerCatalogue(String query) throws Exception {
+        String endpoint = query.isEmpty()
+                ? "https://api.deezer.com/chart/0/tracks?limit=24"
+                : "https://api.deezer.com/search?q=" + enc(query) + "&limit=24";
+        JSONObject response = requestJsonObject(endpoint);
+        JSONArray data = response.optJSONArray("data");
+        if (data == null) throw new Exception("Deezer returned no track list");
+        List<Track> found = new ArrayList<>();
+        for (int i = 0; i < data.length(); i++) {
+            JSONObject item = data.optJSONObject(i);
+            if (item == null) continue;
+            String preview = item.optString("preview", "");
+            if (preview.isEmpty()) continue;
+            String id = item.optString("id", "");
+            JSONObject artistObject = item.optJSONObject("artist");
+            String artist = artistObject == null ? "Deezer artist" : artistObject.optString("name", "Deezer artist");
+            JSONObject album = item.optJSONObject("album");
+            String art = album == null ? "" : album.optString("cover_medium", "");
+            String albumTitle = album == null ? "" : album.optString("title", "");
+            String title = item.optString("title", "Untitled track");
+            String link = item.optString("link", id.isEmpty() ? "https://www.deezer.com/" :
+                    "https://www.deezer.com/track/" + Uri.encode(id));
+            found.add(new Track(id, title, artist, "Deezer preview · about 30 sec", "deezer-preview",
+                    preview, art, link, albumTitle, "", ""));
+        }
+        return found;
+    }
+
+    private List<Track> searchArchiveCatalogue(String query) throws Exception {
+        String expression = "mediatype:audio AND (licenseurl:*creativecommons.org* OR licenseurl:*publicdomain*)";
+        String clean = query.replaceAll("[^\\p{L}\\p{N}\\s_-]", " ").trim();
+        if (!clean.isEmpty()) expression += " AND title:(" + clean + ")";
+        String endpoint = "https://archive.org/advancedsearch.php?q=" + enc(expression)
+                + "&fl%5B%5D=identifier&fl%5B%5D=title&fl%5B%5D=creator&fl%5B%5D=licenseurl"
+                + "&rows=20&page=1&output=json&sort%5B%5D=downloads+desc";
+        JSONObject response = requestJsonObject(endpoint);
+        JSONObject responseBlock = response.optJSONObject("response");
+        JSONArray docs = responseBlock == null ? null : responseBlock.optJSONArray("docs");
+        if (docs == null) throw new Exception("Internet Archive returned no results");
+        List<Track> found = new ArrayList<>();
+        for (int i = 0; i < docs.length(); i++) {
+            JSONObject item = docs.optJSONObject(i);
+            if (item == null) continue;
+            String id = item.optString("identifier", "");
+            if (id.isEmpty()) continue;
+            String title = item.optString("title", id);
+            Object creator = item.opt("creator");
+            String artist = creator instanceof JSONArray ? ((JSONArray) creator).optString(0, "Archive contributor")
+                    : (creator == null || creator == JSONObject.NULL ? "Archive contributor" : String.valueOf(creator));
+            String license = item.optString("licenseurl", "");
+            found.add(new Track(id, title, artist, "Internet Archive · open licence check", "archive",
+                    "", "", license));
+        }
+        return found;
+    }
+
+    private List<Track> searchYoutubeCatalogue(String query) throws Exception {
+        String q = query.isEmpty() ? "music sort:views" : query;
+        String[] instances = {
+                "https://inv.nadeko.net",
+                "https://invidious.nerdvpn.de",
+                "https://invidious.f5.si",
+                "https://invidious.tiekoetter.com"
+        };
+        Exception last = null;
+        for (String instance : instances) {
+            try {
+                List<Track> found = searchYoutubeInstance(instance, q);
+                if (!found.isEmpty()) return found;
+                last = new Exception("No public YouTube listings from this instance");
+            } catch (Exception e) {
+                last = e;
+            }
+        }
+        throw last == null ? new Exception("No YouTube catalog instance responded") : last;
     }
 
     private void loadCurrentSource(String query) {
-        if ("liked".equals(source)) {
+        if ("all".equals(source)) {
+            loadAllSources(query);
+        } else if ("liked".equals(source)) {
             resultHeading.setText("YOUR LIKED MUSIC");
             showTracks(new ArrayList<>(favoriteTracks), favoriteTracks.isEmpty()
                     ? "Your collection is empty. Tap the heart on a result to save it here."
@@ -995,8 +1386,8 @@ public final class MainActivity extends Activity {
         } else if ("playlist".equals(source)) {
             resultHeading.setText("PLAYLIST • " + importedPlaylistName.toUpperCase(Locale.ROOT));
             showTracks(playlistTracks, playlistTracks.isEmpty()
-                    ? "No imported tracks yet. Import a CSV, M3U, or pasted Spotify track list."
-                    : playlistTracks.size() + " imported tracks • tap a track to find it on YouTube/Morphe");
+                    ? "No imported tracks yet. Import a CSV, M3U, or pasted track list."
+                    : playlistTracks.size() + " imported tracks • tap a track to open its options");
         } else if ("youtube".equals(source)) loadYoutube(query);
         else if ("ytmusic".equals(source)) openYoutubeMusicSearch(query);
         else if ("archive".equals(source)) loadArchive(query);
@@ -1100,7 +1491,7 @@ public final class MainActivity extends Activity {
             if (id.isEmpty() || (!"video".equals(type) && !"shortVideo".equals(type))) continue;
             String title = item.optString("title", "Untitled video");
             String artist = item.optString("author", "YouTube creator");
-            String subtitle = "YouTube • opens in Morphe";
+            String subtitle = "YouTube · external player";
             int length = item.optInt("lengthSeconds", 0);
             if (length > 0) subtitle += " • " + formatDuration(length);
             String watchUrl = "https://www.youtube.com/watch?v=" + Uri.encode(id);
@@ -1200,21 +1591,17 @@ public final class MainActivity extends Activity {
     }
 
     private void openYoutubeUrl(String url, String title) {
-        releasePlayer();
-        if (playPauseButton != null) playPauseButton.setText("▶");
-        nowPlayingText.setText(title == null || title.isEmpty() ? "Opening YouTube…" : title);
         try {
             Intent morpheIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
             morpheIntent.setPackage("app.morphe.android.youtube");
             startActivity(morpheIntent);
-            statusText.setText("Opened Morphe YouTube • no Spotify Premium needed");
+            statusText.setText("Opened the selected YouTube link; Spotty stays available in the background.");
         } catch (Exception morpheUnavailable) {
             try {
-                Intent fallbackIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
-                startActivity(fallbackIntent);
-                statusText.setText("Morphe not detected; opened the default YouTube app/browser");
+                startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
+                statusText.setText("Opened the selected YouTube link in an available app.");
             } catch (Exception noHandler) {
-                statusText.setText("No app can open YouTube links. Install Morphe YouTube or a browser.");
+                statusText.setText("No installed app or browser can open this YouTube link.");
             }
         }
     }
@@ -1249,6 +1636,8 @@ public final class MainActivity extends Activity {
             playbackQueue.add(smokeTrack);
             playbackQueueIndex = 0;
             beginPlayback(smokeTrack);
+            // The emulator gate also exercises the actual player sheet, not just the service.
+            showPlayerDialog(smokeTrack);
         }, 500L);
     }
 
@@ -1261,6 +1650,11 @@ public final class MainActivity extends Activity {
                 String artist = intent.getStringExtra("artist");
                 if (title != null && !title.isEmpty() && nowPlayingText != null) {
                     nowPlayingText.setText(title + (artist == null || artist.isEmpty() ? "" : " — " + artist));
+                }
+                if (title != null && !title.isEmpty() && playerTitleView != null) playerTitleView.setText(title);
+                if (artist != null && playerArtistView != null) playerArtistView.setText(artist);
+                if (playerToggleView != null) {
+                    playerToggleView.setText("connecting".equals(state) ? "…" : (needsExternalPlayback(activePlayerSelection) ? "↗" : ("playing".equals(state) ? "Ⅱ" : "▶")));
                 }
                 if ("playing".equals(state)) {
                     preparing = false; paused = false;
@@ -1765,79 +2159,583 @@ public final class MainActivity extends Activity {
         });
     }
 
+    private int blendColor(int first, int second, float ratio) {
+        float r = Math.max(0f, Math.min(1f, ratio));
+        return Color.rgb(
+                Math.round(Color.red(first) * (1f - r) + Color.red(second) * r),
+                Math.round(Color.green(first) * (1f - r) + Color.green(second) * r),
+                Math.round(Color.blue(first) * (1f - r) + Color.blue(second) * r));
+    }
+
+    private GradientDrawable heroDrawable() {
+        int edge = "Dark Academia".equals(activeTheme) ? Color.rgb(92, 68, 41)
+                : ("Midwest Emo".equals(activeTheme) ? Color.rgb(95, 53, 81) : ACCENT);
+        GradientDrawable d = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
+                new int[]{blendColor(PANEL_ALT, edge, 0.34f), PANEL, BG});
+        int radius = "Retro CRT".equals(activeTheme) ? 8 : ("Dark Academia".equals(activeTheme) ? 13 : 25);
+        d.setCornerRadius(dp(radius));
+        d.setStroke(dp(1), Color.argb(55, Color.red(edge), Color.green(edge), Color.blue(edge)));
+        return d;
+    }
+
+    private String themeHeadline() {
+        switch (activeTheme) {
+            case "Midwest Emo": return "Songs for the long way home.";
+            case "Synthwave": return "Midnight looks good on you.";
+            case "Vaporwave": return "A soft glitch in the ordinary.";
+            case "Cyberpunk": return "Find signal in the static.";
+            case "Aurora Forest": return "Get lost. Come back with a song.";
+            case "AMOLED": return "Nothing extra. Just the feeling.";
+            case "Y2K Glass": return "Tomorrow, in full colour.";
+            case "Candy Pop": return "Make your ears feel something.";
+            case "Retro CRT": return "Broadcast from another planet.";
+            case "Sunset Coast": return "Golden-hour soundtracks.";
+            case "Dark Academia": return "For the beautifully overthought.";
+            default: return "A little less algorithm. A little more feeling.";
+        }
+    }
+
+    private String themeNarrative() {
+        switch (activeTheme) {
+            case "Midwest Emo": return "Fuzzy guitars · diary lyrics · 2 a.m. bus rides";
+            case "Synthwave": return "Neon horizons · chrome drums · after-hours energy";
+            case "Vaporwave": return "Lost malls · soft pixels · yesterday's future";
+            case "Cyberpunk": return "Glitched transmissions · underground frequencies";
+            case "Aurora Forest": return "Mist, moss and music from the edge of the map";
+            case "AMOLED": return "A clean listening room, with the lights turned down";
+            case "Y2K Glass": return "Iridescent surfaces, soft chrome and digital nostalgia";
+            case "Candy Pop": return "Playful shapes, vivid covers and a little chaos";
+            case "Retro CRT": return "Scanlines, bootlegs and late-night broadcasts";
+            case "Sunset Coast": return "Warm haze, dusty drums and the last light";
+            case "Dark Academia": return "Ink, paper, old rooms and records worth keeping";
+            default: return "An independent mix of open catalogues, local files and strange little finds.";
+        }
+    }
+
+    private GradientDrawable coverBackdrop(Track track) {
+        int second = "Dark Academia".equals(activeTheme) ? Color.rgb(127, 83, 46)
+                : ("Midwest Emo".equals(activeTheme) ? Color.rgb(105, 65, 95) : ACCENT);
+        if (track != null && "deezer-preview".equals(track.provider)) second = Color.rgb(225, 125, 69);
+        if (track != null && "audius".equals(track.provider)) second = Color.rgb(92, 192, 180);
+        if (track != null && ("archive".equals(track.provider) || "archive-playable".equals(track.provider))) second = Color.rgb(190, 163, 111);
+        GradientDrawable d = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
+                new int[]{blendColor(second, TEXT, 0.12f), PANEL_ALT, BG});
+        d.setCornerRadius(dp(18));
+        return d;
+    }
+
+    private FrameLayout createCoverFrame(Track track, int size) {
+        FrameLayout frame = new FrameLayout(this);
+        frame.setBackground(coverBackdrop(track));
+        frame.setClipToOutline(true);
+        TextView glyph = text(track == null ? "◉" :
+                ("audius".equals(track.provider) ? "∿" :
+                ("deezer-preview".equals(track.provider) ? "◒" :
+                (("archive".equals(track.provider) || "archive-playable".equals(track.provider)) ? "✳" :
+                ("local".equals(track.provider) ? "▤" : "♫")))),
+                size >= dp(150) ? 53 : 28, TEXT, true);
+        glyph.setGravity(Gravity.CENTER);
+        frame.addView(glyph, new FrameLayout.LayoutParams(-1, -1));
+        ImageView art = new ImageView(this);
+        art.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        art.setBackground(roundRect(PANEL_ALT, 16));
+        art.setClipToOutline(true);
+        art.setVisibility(View.GONE);
+        frame.addView(art, new FrameLayout.LayoutParams(-1, -1));
+        if (track != null && !track.artworkUrl.isEmpty()) loadTrackArtwork(art, track.artworkUrl);
+        else art.setVisibility(View.GONE);
+        return frame;
+    }
+
+    private void loadTrackArtwork(ImageView view, String address) {
+        if (view == null || address == null || !address.startsWith("https://")) return;
+        view.setTag(address);
+        io.execute(() -> {
+            HttpURLConnection connection = null;
+            Bitmap bitmap = null;
+            try {
+                connection = (HttpURLConnection) new URL(address).openConnection();
+                connection.setConnectTimeout(4500);
+                connection.setReadTimeout(5000);
+                connection.setInstanceFollowRedirects(true);
+                connection.setRequestProperty("User-Agent", "SpottyAndroid/0.2");
+                try (InputStream stream = connection.getInputStream()) {
+                    bitmap = BitmapFactory.decodeStream(stream);
+                }
+            } catch (Exception ignored) {
+                // Artwork is decorative; never allow an image host failure to stop playback/search.
+            } finally {
+                if (connection != null) connection.disconnect();
+            }
+            final Bitmap finalBitmap = bitmap;
+            if (finalBitmap != null) main.post(() -> {
+                if (address.equals(view.getTag())) {
+                    view.setVisibility(View.VISIBLE);
+                    view.setImageBitmap(finalBitmap);
+                }
+            });
+        });
+    }
+
+    private String formatPlayerTime(int milliseconds) {
+        return formatDuration(Math.max(0, milliseconds) / 1000);
+    }
+
+    private void showLibraryDialog() {
+        Dialog dialog = new Dialog(this);
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setBackgroundColor(BG);
+        root.setPadding(dp(20), dp(16), dp(20), dp(18));
+
+        LinearLayout heading = new LinearLayout(this);
+        heading.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout titleBlock = new LinearLayout(this);
+        titleBlock.setOrientation(LinearLayout.VERTICAL);
+        TextView kicker = text("SAVED, LOCAL & SIDE CHANNELS", 9, ACCENT, true);
+        kicker.setLetterSpacing(0.12f);
+        TextView title = text("Your library", 25, TEXT, true);
+        titleBlock.addView(kicker);
+        LinearLayout.LayoutParams titleLp = new LinearLayout.LayoutParams(-1, -2);
+        titleLp.topMargin = dp(4);
+        titleBlock.addView(title, titleLp);
+        heading.addView(titleBlock, new LinearLayout.LayoutParams(0, -2, 1));
+        TextView close = text("×", 27, TEXT, true);
+        close.setGravity(Gravity.CENTER);
+        close.setBackground(roundRect(PANEL, 50));
+        heading.addView(close, new LinearLayout.LayoutParams(dp(42), dp(42)));
+        close.setOnClickListener(v -> dialog.dismiss());
+        root.addView(heading);
+
+        ScrollView scroller = new ScrollView(this);
+        scroller.setVerticalScrollBarEnabled(false);
+        LinearLayout rows = new LinearLayout(this);
+        rows.setOrientation(LinearLayout.VERTICAL);
+        scroller.addView(rows);
+        LinearLayout.LayoutParams scrollLp = new LinearLayout.LayoutParams(-1, 0, 1);
+        scrollLp.topMargin = dp(16);
+        root.addView(scroller, scrollLp);
+
+        addSettingsRow(rows, "♡", "Liked tracks", favoriteTracks.size() + " saved on this device", () -> {
+            dialog.dismiss();
+            source = "liked";
+            loadCurrentSource("");
+        });
+        addSettingsRow(rows, "▤", "Local audio & FLAC", localTracks.size() + " local files · original file quality", () -> {
+            dialog.dismiss();
+            source = "local";
+            loadLocalLibrary();
+        });
+        addSettingsRow(rows, "♫", "Imported playlist", importedPlaylistName + " · " + playlistTracks.size() + " tracks", () -> {
+            dialog.dismiss();
+            source = "playlist";
+            loadCurrentSource("");
+        });
+        addSettingsRow(rows, "＋", "Import playlist", "CSV, M3U or exported track lists", () -> {
+            dialog.dismiss();
+            showPlaylistImportDialog();
+        });
+        addSettingsRow(rows, "◌", "Internet radio", "Stations are separate from song search", () -> {
+            dialog.dismiss();
+            source = "radio";
+            loadRadio(searchField == null ? "" : searchField.getText().toString().trim());
+        });
+        addSettingsRow(rows, "⇣", "Soulseek / FLAC folder", "Open Seeker or import files you have rights to", () -> {
+            dialog.dismiss();
+            loadSoulseekSource();
+        });
+        addSettingsRow(rows, "↗", "SoundCloud", "Open the official app/site; in-app stream access is not configured", () -> {
+            dialog.dismiss();
+            openSoundCloudSearch(searchField == null ? "" : searchField.getText().toString().trim());
+        });
+
+        TextView foot = text("Your saved tracks stay on this phone. Public catalogues are discovered separately.", 10, MUTED, false);
+        foot.setGravity(Gravity.CENTER);
+        foot.setPadding(dp(4), dp(10), dp(4), dp(4));
+        root.addView(foot);
+        dialog.setContentView(root);
+        dialog.setCancelable(true);
+        dialog.show();
+        Window window = dialog.getWindow();
+        if (window != null) {
+            window.setBackgroundDrawable(new ColorDrawable(BG));
+            window.setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT);
+            window.setStatusBarColor(BG);
+            window.setNavigationBarColor(BG);
+            window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
+        }
+    }
+
+    private void addSettingsRow(LinearLayout parent, String symbol, String titleText, String detailText, Runnable action) {
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setPadding(dp(13), dp(13), dp(12), dp(13));
+        row.setBackground(panelCardDrawable());
+        TextView icon = text(symbol, 20, ACCENT, true);
+        icon.setGravity(Gravity.CENTER);
+        row.addView(icon, new LinearLayout.LayoutParams(dp(34), dp(40)));
+        LinearLayout copy = new LinearLayout(this);
+        copy.setOrientation(LinearLayout.VERTICAL);
+        TextView title = text(titleText, 13, TEXT, true);
+        TextView detail = text(detailText, 10, MUTED, false);
+        detail.setMaxLines(2);
+        copy.addView(title);
+        LinearLayout.LayoutParams detailLp = new LinearLayout.LayoutParams(-1, -2);
+        detailLp.topMargin = dp(4);
+        copy.addView(detail, detailLp);
+        LinearLayout.LayoutParams copyLp = new LinearLayout.LayoutParams(0, -2, 1);
+        copyLp.leftMargin = dp(10);
+        row.addView(copy, copyLp);
+        TextView arrow = text("›", 25, MUTED, false);
+        row.addView(arrow);
+        row.setOnClickListener(v -> action.run());
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+        lp.bottomMargin = dp(8);
+        parent.addView(row, lp);
+    }
+
+    private int themeAccentFor(String theme) {
+        switch (theme) {
+            case "Midwest Emo": return Color.rgb(237, 164, 202);
+            case "Synthwave": return Color.rgb(255, 82, 211);
+            case "Vaporwave": return Color.rgb(95, 239, 236);
+            case "Cyberpunk": return Color.rgb(236, 255, 0);
+            case "Aurora Forest": return Color.rgb(120, 255, 180);
+            case "AMOLED": return Color.rgb(133, 235, 158);
+            case "Y2K Glass": return Color.rgb(255, 224, 145);
+            case "Candy Pop": return Color.rgb(255, 172, 211);
+            case "Retro CRT": return Color.rgb(127, 255, 91);
+            case "Sunset Coast": return Color.rgb(255, 198, 119);
+            case "Dark Academia": return Color.rgb(214, 175, 91);
+            default: return Color.rgb(104, 246, 204);
+        }
+    }
+
+    private void showPlayerDialog(Track track) {
+        if (track == null) {
+            Toast.makeText(this, "Choose a track first.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (playerDialog != null && playerDialog.isShowing()) playerDialog.dismiss();
+        activePlayerSelection = track;
+        Dialog dialog = new Dialog(this);
+        playerDialog = dialog;
+
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(dp(22), dp(12), dp(22), dp(18));
+        root.setBackgroundColor(BG);
+
+        LinearLayout top = new LinearLayout(this);
+        top.setGravity(Gravity.CENTER_VERTICAL);
+        TextView close = text("⌄", 30, TEXT, true);
+        close.setGravity(Gravity.CENTER);
+        close.setBackground(roundRect(PANEL, 50));
+        top.addView(close, new LinearLayout.LayoutParams(dp(44), dp(44)));
+        close.setOnClickListener(v -> dialog.dismiss());
+        LinearLayout topTitle = new LinearLayout(this);
+        topTitle.setOrientation(LinearLayout.VERTICAL);
+        TextView overline = text("NOW PLAYING", 10, ACCENT, true);
+        overline.setLetterSpacing(0.13f);
+        TextView themeLine = text(activeTheme.toUpperCase(Locale.ROOT), 8, MUTED, false);
+        themeLine.setLetterSpacing(0.09f);
+        topTitle.addView(overline);
+        topTitle.addView(themeLine);
+        LinearLayout.LayoutParams topTitleLp = new LinearLayout.LayoutParams(0, -2, 1);
+        topTitleLp.leftMargin = dp(12);
+        top.addView(topTitle, topTitleLp);
+        TextView queue = text("≡", 23, TEXT, true);
+        queue.setGravity(Gravity.CENTER);
+        queue.setBackground(roundRect(PANEL, 50));
+        queue.setContentDescription("Queue");
+        top.addView(queue, new LinearLayout.LayoutParams(dp(44), dp(44)));
+        queue.setOnClickListener(v -> showQueueDialog());
+        root.addView(top, new LinearLayout.LayoutParams(-1, -2));
+
+        ScrollView scroller = new ScrollView(this);
+        scroller.setFillViewport(false);
+        scroller.setVerticalScrollBarEnabled(false);
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setGravity(Gravity.CENTER_HORIZONTAL);
+
+        int artSize = Math.max(dp(190), Math.min(dp(300), getResources().getDisplayMetrics().widthPixels - dp(76)));
+        FrameLayout art = createCoverFrame(track, artSize);
+        LinearLayout.LayoutParams artLp = new LinearLayout.LayoutParams(artSize, artSize);
+        artLp.topMargin = dp(16);
+        artLp.bottomMargin = dp(22);
+        content.addView(art, artLp);
+
+        playerTitleView = text(track.title, 23, TEXT, true);
+        playerTitleView.setGravity(Gravity.CENTER);
+        playerTitleView.setMaxLines(2);
+        playerArtistView = text(track.artist, 14, MUTED, false);
+        playerArtistView.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams playerArtistLp = new LinearLayout.LayoutParams(-1, -2);
+        playerArtistLp.topMargin = dp(6);
+        content.addView(playerTitleView, new LinearLayout.LayoutParams(-1, -2));
+        content.addView(playerArtistView, playerArtistLp);
+
+        LinearLayout favoriteRow = new LinearLayout(this);
+        favoriteRow.setGravity(Gravity.CENTER);
+        TextView fav = text(isFavorite(track) ? "♥  SAVED TO YOUR LIBRARY" : "♡  ADD TO YOUR LIBRARY", 10,
+                isFavorite(track) ? ACCENT : MUTED, true);
+        fav.setLetterSpacing(0.04f);
+        fav.setPadding(dp(10), dp(10), dp(10), dp(5));
+        favoriteRow.addView(fav);
+        fav.setOnClickListener(v -> {
+            boolean liked = toggleFavorite(activePlayerSelection == null ? track : activePlayerSelection);
+            fav.setText(liked ? "♥  SAVED TO YOUR LIBRARY" : "♡  ADD TO YOUR LIBRARY");
+            fav.setTextColor(liked ? ACCENT : MUTED);
+        });
+        LinearLayout.LayoutParams favLp = new LinearLayout.LayoutParams(-1, -2);
+        favLp.topMargin = dp(2);
+        content.addView(favoriteRow, favLp);
+
+        playerSeekBar = new SeekBar(this);
+        playerSeekBar.setMax(1);
+        playerSeekBar.setProgress(0);
+        LinearLayout.LayoutParams seekLp = new LinearLayout.LayoutParams(-1, dp(32));
+        seekLp.topMargin = dp(12);
+        content.addView(playerSeekBar, seekLp);
+        playerSeekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {}
+            @Override public void onStartTrackingTouch(SeekBar bar) { playerSeeking = true; }
+            @Override public void onStopTrackingTouch(SeekBar bar) {
+                playerSeeking = false;
+                MusicPlaybackService.seekToPosition(bar.getProgress());
+            }
+        });
+
+        LinearLayout timeRow = new LinearLayout(this);
+        timeRow.setGravity(Gravity.CENTER_VERTICAL);
+        playerElapsedView = text("0:00", 10, MUTED, false);
+        playerDurationView = text("—:—", 10, MUTED, false);
+        timeRow.addView(playerElapsedView, new LinearLayout.LayoutParams(0, -2, 1));
+        playerDurationView.setGravity(Gravity.END);
+        timeRow.addView(playerDurationView, new LinearLayout.LayoutParams(0, -2, 1));
+        content.addView(timeRow, new LinearLayout.LayoutParams(-1, -2));
+
+        LinearLayout controls = new LinearLayout(this);
+        controls.setGravity(Gravity.CENTER);
+        controls.setPadding(0, dp(12), 0, dp(10));
+        TextView previous = text("⏮", 21, TEXT, true);
+        previous.setGravity(Gravity.CENTER);
+        controls.addView(previous, new LinearLayout.LayoutParams(dp(56), dp(56)));
+        previous.setOnClickListener(v -> playPreviousTrack());
+        playerToggleView = text(needsExternalPlayback(track) ? "↗" : "▶", 27, BG, true);
+        playerToggleView.setGravity(Gravity.CENTER);
+        playerToggleView.setBackground(roundRect(ACCENT, 50));
+        LinearLayout.LayoutParams toggleLp = new LinearLayout.LayoutParams(dp(72), dp(72));
+        toggleLp.leftMargin = dp(20);
+        toggleLp.rightMargin = dp(20);
+        controls.addView(playerToggleView, toggleLp);
+        playerToggleView.setEnabled(!checkingArchiveLicense);
+        playerToggleView.setOnClickListener(v -> {
+            Track selected = activePlayerSelection;
+            if (selected == null) return;
+            if ("youtube".equals(selected.provider)) {
+                openYoutubeUrl(selected.playUrl, selected.title);
+            } else if ("playlist-entry".equals(selected.provider)) {
+                openYoutubeMusicSearch(selected.title + " " + selected.artist);
+            } else if (checkingArchiveLicense) {
+                statusText.setText("Still verifying the open-audio licence…");
+            } else if (selectionIsCurrent(selected) && MusicPlaybackService.hasTrack()) {
+                togglePlayback();
+            } else {
+                playTrack(selected);
+            }
+        });
+        TextView next = text("⏭", 21, TEXT, true);
+        next.setGravity(Gravity.CENTER);
+        controls.addView(next, new LinearLayout.LayoutParams(dp(56), dp(56)));
+        next.setOnClickListener(v -> playNextTrack());
+        content.addView(controls, new LinearLayout.LayoutParams(-1, -2));
+
+        if (needsExternalPlayback(track)) {
+            TextView note = text("This catalogue entry does not provide a stream Spotty can play. Nothing leaves the app until you choose the destination below.", 11, MUTED, false);
+            note.setGravity(Gravity.CENTER);
+            note.setLineSpacing(dp(2), 1.05f);
+            LinearLayout.LayoutParams noteLp = new LinearLayout.LayoutParams(-1, -2);
+            noteLp.topMargin = dp(2);
+            content.addView(note, noteLp);
+            TextView open = text("Open in " + ("youtube".equals(track.provider) ? "YouTube" : "YouTube Music") + "  ↗", 12, ACCENT, true);
+            open.setGravity(Gravity.CENTER);
+            open.setPadding(dp(12), dp(14), dp(12), dp(14));
+            open.setBackground(roundRect(PANEL_ALT, 15));
+            LinearLayout.LayoutParams openLp = new LinearLayout.LayoutParams(-1, -2);
+            openLp.topMargin = dp(12);
+            content.addView(open, openLp);
+            open.setOnClickListener(v -> {
+                if ("youtube".equals(track.provider)) openYoutubeUrl(track.playUrl, track.title);
+                else openYoutubeMusicSearch(track.title + " " + track.artist);
+            });
+            playerSeekBar.setVisibility(View.GONE);
+            timeRow.setVisibility(View.GONE);
+            controls.getChildAt(0).setVisibility(View.INVISIBLE);
+            next.setVisibility(View.INVISIBLE);
+        } else if ("deezer-preview".equals(track.provider)) {
+            TextView open = text("Find the full track on Deezer  ↗", 11, MUTED, true);
+            open.setGravity(Gravity.CENTER);
+            open.setPadding(dp(8), dp(10), dp(8), dp(10));
+            content.addView(open, new LinearLayout.LayoutParams(-1, -2));
+            open.setOnClickListener(v -> openDeezerTrack(track));
+        }
+
+        playerSourceView = text("SOURCE  ·  " + displayProvider(track), 9, MUTED, true);
+        playerSourceView.setGravity(Gravity.CENTER);
+        playerSourceView.setLetterSpacing(0.1f);
+        LinearLayout.LayoutParams sourceLp = new LinearLayout.LayoutParams(-1, -2);
+        sourceLp.topMargin = dp(19);
+        content.addView(playerSourceView, sourceLp);
+        scroller.addView(content);
+        LinearLayout.LayoutParams scrollerLp = new LinearLayout.LayoutParams(-1, 0, 1);
+        scrollerLp.topMargin = dp(2);
+        root.addView(scroller, scrollerLp);
+
+        dialog.setContentView(root);
+        dialog.setCancelable(true);
+        dialog.setOnDismissListener(ignored -> {
+            main.removeCallbacks(playerProgressTicker);
+            playerSeekBar = null;
+            playerElapsedView = null;
+            playerDurationView = null;
+            playerToggleView = null;
+            playerTitleView = null;
+            playerArtistView = null;
+            playerSourceView = null;
+            playerArtwork = null;
+            if (playerDialog == dialog) playerDialog = null;
+        });
+        dialog.show();
+        Window window = dialog.getWindow();
+        if (window != null) {
+            window.setBackgroundDrawable(new ColorDrawable(BG));
+            window.setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT);
+            window.setStatusBarColor(BG);
+            window.setNavigationBarColor(BG);
+            window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
+        }
+        // UIAutomator's wait-for-idle check cannot settle while a debug smoke test
+        // continuously mutates SeekBar progress. Keep production refresh unchanged,
+        // but leave the test player sheet static long enough to inspect its controls.
+        boolean playbackSmokeTest = (getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0
+                && getIntent().getBooleanExtra("spotty_ci_smoke_playback", false);
+        if (!playbackSmokeTest) main.post(playerProgressTicker);
+    }
+
+    private void refreshPlayerSelection(Track track) {
+        if (playerTitleView != null) playerTitleView.setText(track.title);
+        if (playerArtistView != null) playerArtistView.setText(track.artist);
+        if (playerSourceView != null) playerSourceView.setText("SOURCE  ·  " + displayProvider(track));
+        if (playerToggleView != null) {
+            playerToggleView.setEnabled(true);
+            playerToggleView.setText(MusicPlaybackService.isPlaying() ? "Ⅱ" : "▶");
+        }
+    }
+
+    private void showQueueDialog() {
+        if (playbackQueue == null || playbackQueue.isEmpty()) {
+            Toast.makeText(this, "Play a result to build your queue.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        String[] titles = new String[playbackQueue.size()];
+        for (int i = 0; i < playbackQueue.size(); i++) {
+            Track item = playbackQueue.get(i);
+            titles[i] = (i == playbackQueueIndex ? "▶  " : "") + item.title + " — " + item.artist;
+        }
+        new AlertDialog.Builder(this).setTitle("Up next").setItems(titles, (dialog, which) -> {
+            playbackQueueIndex = which;
+            playTrack(playbackQueue.get(which));
+        }).setNegativeButton("Close", null).show();
+    }
+
     private void showTracks(List<Track> tracks, String status) {
         visibleTracks.clear();
         visibleTracks.addAll(tracks);
         resultsList.removeAllViews();
         if ("local".equals(source)) {
-            Button addLocal = button("＋ Add local audio / FLAC", ACCENT, BG);
+            TextView addLocal = text("＋  ADD LOCAL AUDIO / FLAC", 11, ACCENT, true);
+            addLocal.setGravity(Gravity.CENTER);
+            addLocal.setBackground(roundRect(PANEL_ALT, 15));
+            addLocal.setPadding(dp(12), dp(14), dp(12), dp(14));
             addLocal.setOnClickListener(v -> chooseLocalAudio());
-            LinearLayout.LayoutParams addLocalLp = new LinearLayout.LayoutParams(-1, dp(44));
-            addLocalLp.bottomMargin = dp(8);
+            LinearLayout.LayoutParams addLocalLp = new LinearLayout.LayoutParams(-1, -2);
+            addLocalLp.bottomMargin = dp(9);
             resultsList.addView(addLocal, addLocalLp);
         }
         if (tracks.isEmpty()) {
-            TextView empty = text(status, 14, MUTED, false);
-            empty.setPadding(dp(8), dp(18), dp(8), dp(18));
-            resultsList.addView(empty);
+            LinearLayout emptyCard = new LinearLayout(this);
+            emptyCard.setOrientation(LinearLayout.VERTICAL);
+            emptyCard.setPadding(dp(17), dp(17), dp(17), dp(17));
+            emptyCard.setBackground(panelCardDrawable());
+            TextView emptyTitle = text("Nothing in this orbit yet.", 16, TEXT, true);
+            emptyCard.addView(emptyTitle);
+            TextView empty = text(status, 12, MUTED, false);
+            LinearLayout.LayoutParams emptyLp = new LinearLayout.LayoutParams(-1, -2);
+            emptyLp.topMargin = dp(7);
+            emptyCard.addView(empty, emptyLp);
+            if ("all".equals(source)) {
+                TextView retry = text("↻  Try search again", 12, ACCENT, true);
+                retry.setPadding(0, dp(15), 0, 0);
+                retry.setOnClickListener(v -> loadAllSources(searchField.getText().toString().trim()));
+                emptyCard.addView(retry);
+            }
+            resultsList.addView(emptyCard, new LinearLayout.LayoutParams(-1, -2));
         } else {
             for (Track track : tracks) {
                 LinearLayout card = new LinearLayout(this);
-                card.setOrientation(LinearLayout.VERTICAL);
-                card.setPadding(dp(14), dp(12), dp(14), dp(12));
+                card.setGravity(Gravity.CENTER_VERTICAL);
+                card.setOrientation(LinearLayout.HORIZONTAL);
+                card.setPadding(dp(10), dp(10), dp(9), dp(10));
                 card.setBackground(panelCardDrawable());
-                TextView name = text(track.title, 15, TEXT, true);
+
+                FrameLayout cover = createCoverFrame(track, dp(72));
+                LinearLayout.LayoutParams coverLp = new LinearLayout.LayoutParams(dp(72), dp(72));
+                coverLp.rightMargin = dp(12);
+                card.addView(cover, coverLp);
+
+                LinearLayout info = new LinearLayout(this);
+                info.setGravity(Gravity.CENTER_VERTICAL);
+                info.setOrientation(LinearLayout.VERTICAL);
+                TextView name = text(track.title, 14, TEXT, true);
                 name.setMaxLines(2);
-                TextView artist = text(track.artist, 13, MUTED, false);
+                TextView artist = text(track.artist, 12, MUTED, false);
                 artist.setMaxLines(1);
-                TextView provider = text(track.subtitle, 10, ACCENT, false);
-                provider.setMaxLines(1);
-                LinearLayout titleRow = new LinearLayout(this);
-                titleRow.setOrientation(LinearLayout.HORIZONTAL);
-                titleRow.setGravity(Gravity.CENTER_VERTICAL);
-                name.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 1));
-                titleRow.addView(name);
-                TextView like = text(isFavorite(track) ? "♥" : "♡", 23,
+                LinearLayout.LayoutParams artistLp = new LinearLayout.LayoutParams(-1, -2);
+                artistLp.topMargin = dp(4);
+                info.addView(name);
+                info.addView(artist, artistLp);
+                card.addView(info, new LinearLayout.LayoutParams(0, -2, 1));
+
+                TextView like = text(isFavorite(track) ? "♥" : "♡", 22,
                         isFavorite(track) ? ACCENT : MUTED, true);
                 like.setGravity(Gravity.CENTER);
                 like.setContentDescription(isFavorite(track) ? "Remove from liked tracks" : "Add to liked tracks");
-                like.setPadding(dp(8), 0, dp(4), 0);
+                like.setBackground(roundRect(PANEL_ALT, 50));
+                LinearLayout.LayoutParams likeLp = new LinearLayout.LayoutParams(dp(39), dp(39));
+                likeLp.leftMargin = dp(5);
+                card.addView(like, likeLp);
                 like.setOnClickListener(v -> {
                     boolean nowLiked = toggleFavorite(track);
                     like.setText(nowLiked ? "♥" : "♡");
                     like.setTextColor(nowLiked ? ACCENT : MUTED);
-                    like.setContentDescription(nowLiked ? "Remove from liked tracks" : "Add to liked tracks");
                     if ("liked".equals(source) && !nowLiked) {
-                        showTracks(new ArrayList<>(favoriteTracks), favoriteTracks.size() + " saved tracks • stored on this device");
+                        showTracks(new ArrayList<>(favoriteTracks), favoriteTracks.size() + " saved tracks on this device");
                     }
                 });
-                titleRow.addView(like, new LinearLayout.LayoutParams(dp(42), dp(42)));
-                card.addView(titleRow);
-                LinearLayout.LayoutParams artistLp = new LinearLayout.LayoutParams(-1, -2);
-                artistLp.topMargin = dp(4);
-                card.addView(artist, artistLp);
-                LinearLayout.LayoutParams providerLp = new LinearLayout.LayoutParams(-1, -2);
-                providerLp.topMargin = dp(7);
-                card.addView(provider, providerLp);
-                if ("archive".equals(track.provider)) {
-                    TextView download = text("↓  Download licensed audio", 12, ACCENT, true);
-                    download.setPadding(0, dp(11), 0, 0);
-                    download.setOnClickListener(v -> downloadArchive(track));
-                    card.addView(download);
-                }
-                if ("deezer-preview".equals(track.provider)) {
-                    TextView openDeezer = text("↗  Open full track in Deezer", 12, ACCENT, true);
-                    openDeezer.setPadding(0, dp(11), 0, 0);
-                    openDeezer.setOnClickListener(v -> openDeezerTrack(track));
-                    card.addView(openDeezer);
-                }
+
                 card.setOnClickListener(v -> playTrack(track));
                 LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(-1, -2);
                 cardLp.bottomMargin = dp(8);
-                card.setAlpha(0f);
-                card.setTranslationY(dp(8));
                 resultsList.addView(card, cardLp);
-                card.animate().alpha(1f).translationY(0f).setDuration(180).start();
+                if ("archive".equals(track.provider)) {
+                    TextView action = text("↓  Download licensed audio", 10, ACCENT, true);
+                    action.setPadding(dp(8), dp(1), 0, dp(8));
+                    action.setOnClickListener(v -> downloadArchive(track));
+                    resultsList.addView(action);
+                }
             }
         }
         statusText.setText(status);
@@ -1864,47 +2762,32 @@ public final class MainActivity extends Activity {
     }
 
     private GradientDrawable panelCardDrawable() {
-        if ("Frutiger Aero".equals(activeTheme)) {
-            GradientDrawable d = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
-                    new int[]{Color.rgb(25, 94, 116), Color.rgb(20, 59, 83)});
-            d.setCornerRadius(dp(15));
-            d.setStroke(dp(1), Color.argb(105, 132, 255, 230));
-            return d;
-        }
-        if ("Cyberpunk".equals(activeTheme) || "Retro CRT".equals(activeTheme)) {
-            GradientDrawable d = roundRect(PANEL, 15);
-            d.setStroke(dp(1), ACCENT);
-            return d;
-        }
-        if ("Y2K Glass".equals(activeTheme)) {
-            GradientDrawable d = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
-                    new int[]{Color.rgb(79, 129, 188), Color.rgb(48, 62, 123)});
-            d.setCornerRadius(dp(18));
-            d.setStroke(dp(1), Color.argb(150, 210, 239, 255));
-            return d;
-        }
-        if ("Candy Pop".equals(activeTheme) || "Sunset Coast".equals(activeTheme)) {
-            GradientDrawable d = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
+        int radius = "Retro CRT".equals(activeTheme) ? 7 :
+                ("Dark Academia".equals(activeTheme) ? 12 : ("Y2K Glass".equals(activeTheme) ? 23 : 19));
+        GradientDrawable d;
+        if ("AMOLED".equals(activeTheme)) {
+            d = roundRect(Color.rgb(15, 15, 19), radius);
+            d.setStroke(dp(1), Color.rgb(49, 49, 57));
+        } else if ("Dark Academia".equals(activeTheme)) {
+            d = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
+                    new int[]{Color.rgb(64, 51, 38), PANEL});
+            d.setCornerRadius(dp(radius));
+            d.setStroke(dp(1), Color.argb(105, Color.red(ACCENT), Color.green(ACCENT), Color.blue(ACCENT)));
+        } else if ("Retro CRT".equals(activeTheme)) {
+            d = roundRect(PANEL, radius);
+            d.setStroke(dp(1), Color.argb(125, Color.red(ACCENT), Color.green(ACCENT), Color.blue(ACCENT)));
+        } else if ("Y2K Glass".equals(activeTheme)) {
+            d = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
                     new int[]{PANEL_ALT, PANEL});
-            d.setCornerRadius(dp(17));
-            d.setStroke(dp(1), Color.argb(100, 255, 220, 235));
-            return d;
+            d.setCornerRadius(dp(radius));
+            d.setStroke(dp(1), Color.argb(120, 235, 247, 255));
+        } else {
+            d = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
+                    new int[]{blendColor(PANEL_ALT, ACCENT, 0.10f), PANEL});
+            d.setCornerRadius(dp(radius));
+            d.setStroke(dp(1), Color.argb(38, Color.red(ACCENT), Color.green(ACCENT), Color.blue(ACCENT)));
         }
-        if ("Synthwave".equals(activeTheme) || "Vaporwave".equals(activeTheme)) {
-            GradientDrawable d = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
-                    new int[]{PANEL_ALT, PANEL});
-            d.setCornerRadius(dp(16));
-            d.setStroke(dp(1), Color.argb(100, Color.red(ACCENT), Color.green(ACCENT), Color.blue(ACCENT)));
-            return d;
-        }
-        if ("Dark Academia".equals(activeTheme)) {
-            GradientDrawable d = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
-                    new int[]{Color.rgb(76, 62, 43), Color.rgb(43, 37, 31)});
-            d.setCornerRadius(dp(15));
-            d.setStroke(dp(1), Color.argb(110, Color.red(ACCENT), Color.green(ACCENT), Color.blue(ACCENT)));
-            return d;
-        }
-        return roundRect(PANEL, 15);
+        return d;
     }
 
     private int audioFileRank(String name) {
@@ -2051,19 +2934,16 @@ public final class MainActivity extends Activity {
             playbackQueue = new ArrayList<>(visibleTracks);
             playbackQueueIndex = visibleIndex;
         }
-        if ("playlist-entry".equals(track.provider)) {
-            // Imported playlists are music-first: hand off to Morphe Music, while video discovery
-            // remains available from the dedicated YouTube source.
-            openYoutubeMusicSearch(track.title + " " + (track.artist.equals("Unknown artist") ? "" : track.artist));
-            return;
-        }
-        if ("youtube".equals(track.provider)) {
-            openYoutubeUrl(track.playUrl, track.title);
+        if (needsExternalPlayback(track)) {
+            showPlayerDialog(track);
             return;
         }
         if ("archive".equals(track.provider)) {
-            statusText.setText("Checking the audio license…");
-            nowPlayingText.setText(track.title);
+            checkingArchiveLicense = true;
+            currentTrack = track;
+            nowPlayingText.setText(track.title + " — checking licence");
+            statusText.setText("Checking the open-audio licence…");
+            showPlayerDialog(track);
             io.execute(() -> {
                 try {
                     JSONObject response = requestJsonObject("https://archive.org/metadata/" + enc(track.id));
@@ -2074,26 +2954,74 @@ public final class MainActivity extends Activity {
                     boolean allowed = lower.contains("creativecommons.org/licenses/")
                             || lower.contains("creativecommons.org/publicdomain/")
                             || lower.contains("creativecommons.org/zero/");
-                    if (!allowed) throw new Exception("No verifiable Creative Commons/public-domain license was found. This item will not be played.");
+                    if (!allowed) throw new Exception("No verifiable Creative Commons/public-domain licence was found.");
                     JSONArray files = response.optJSONArray("files");
-                    if (files == null) throw new Exception("This archive item has no accessible files.");
+                    if (files == null) throw new Exception("No accessible files are available for this item.");
                     JSONObject chosen = chooseArchiveAudioFile(files, true);
-                    if (chosen == null) throw new Exception("No supported public audio file was found for this item.");
+                    if (chosen == null) throw new Exception("No supported public audio file was found.");
                     String selected = chosen.optString("name", "");
                     String stream = chooseArchiveStreamUrl(track.id, selected);
                     String quality = describeAudioFile(chosen);
                     Track playable = new Track(track.id, track.title, track.artist,
-                            "Internet Archive • " + quality, "archive-playable", stream, "", license);
-                    main.post(() -> beginPlayback(playable));
+                            "Internet Archive · " + quality, "archive-playable", stream, track.artworkUrl,
+                            license, track.album, track.genre, track.playlist);
+                    main.post(() -> {
+                        checkingArchiveLicense = false;
+                        currentTrack = playable;
+                        if (activePlayerSelection != null && activePlayerSelection.id.equals(track.id)) {
+                            activePlayerSelection = playable;
+                            refreshPlayerSelection(playable);
+                        }
+                        beginPlayback(playable);
+                    });
                 } catch (Exception e) {
                     main.post(() -> {
-                        statusText.setText("Cannot play this archive item");
+                        checkingArchiveLicense = false;
+                        statusText.setText("This archive item cannot be played");
                         nowPlayingText.setText(shortError(e));
+                        if (playerToggleView != null) {
+                            playerToggleView.setEnabled(true);
+                            playerToggleView.setText("↻");
+                        }
+                        if (playerSourceView != null) {
+                            playerSourceView.setText("SOURCE · INTERNET ARCHIVE · ITEM NOT PLAYABLE");
+                        }
                     });
                 }
             });
-        } else {
-            beginPlayback(track);
+            return;
+        }
+        if (selectionIsCurrent(track) && MusicPlaybackService.hasTrack()) {
+            showPlayerDialog(track);
+            return;
+        }
+        beginPlayback(track);
+        showPlayerDialog(track);
+    }
+
+    private boolean selectionIsCurrent(Track track) {
+        if (track == null || currentTrack == null) return false;
+        if ("archive".equals(track.provider) && "archive-playable".equals(currentTrack.provider)) {
+            return track.id.equals(currentTrack.id);
+        }
+        return sameTrack(currentTrack, track);
+    }
+
+    private boolean needsExternalPlayback(Track track) {
+        return track != null && ("youtube".equals(track.provider) || "playlist-entry".equals(track.provider));
+    }
+
+    private String displayProvider(Track track) {
+        if (track == null) return "SPOTTY";
+        switch (track.provider) {
+            case "audius": return "AUDIUS · FULL TRACK";
+            case "deezer-preview": return "DEEZER · PREVIEW";
+            case "archive": case "archive-playable": return "INTERNET ARCHIVE · OPEN AUDIO";
+            case "local": return "ON THIS DEVICE";
+            case "radio": return "INTERNET RADIO";
+            case "youtube": return "YOUTUBE · EXTERNAL PLAYER";
+            case "playlist-entry": return "IMPORTED PLAYLIST";
+            default: return track.provider.isEmpty() ? "SPOTTY" : track.provider.toUpperCase(Locale.ROOT);
         }
     }
 
@@ -2137,10 +3065,11 @@ public final class MainActivity extends Activity {
         return serialized.toString();
     }
 
+
     private void beginPlayback(Track track) {
         Track playableTrack = "local".equals(track.provider) ? enrichLocalTrackMetadata(track) : track;
         if (playableTrack.playUrl.isEmpty()) {
-            statusText.setText("No playable stream is available for this result.");
+            statusText.setText("This listing has no in-app audio stream.");
             return;
         }
         releasePlayer();
@@ -2149,7 +3078,12 @@ public final class MainActivity extends Activity {
         preparing = true;
         nowPlayingText.setText(playableTrack.title + " — " + playableTrack.artist);
         playPauseButton.setText("…");
-        statusText.setText("Starting background audio…");
+        if (miniArtwork != null) {
+            miniArtwork.setImageResource(R.drawable.spotty_app_icon);
+            if (!playableTrack.artworkUrl.isEmpty()) loadTrackArtwork(miniArtwork, playableTrack.artworkUrl);
+        }
+        if (playerTitleView != null) refreshPlayerSelection(activePlayerSelection == null ? playableTrack : activePlayerSelection);
+        statusText.setText("Starting playback…");
         boolean debugPlaybackSmoke = (getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0
                 && getIntent().getBooleanExtra("spotty_ci_smoke_playback", false);
         if (!debugPlaybackSmoke) requestNotificationPermissionIfNeeded();
