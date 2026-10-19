@@ -1449,7 +1449,9 @@ public final class MainActivity extends Activity {
             playbackQueueIndex = visibleIndex;
         }
         if ("playlist-entry".equals(track.provider)) {
-            openYoutubeSearch(track.title + " " + (track.artist.equals("Unknown artist") ? "" : track.artist));
+            // Imported playlists are music-first: hand off to Morphe Music, while video discovery
+            // remains available from the dedicated YouTube source.
+            openYoutubeMusicSearch(track.title + " " + (track.artist.equals("Unknown artist") ? "" : track.artist));
             return;
         }
         if ("youtube".equals(track.provider)) {
