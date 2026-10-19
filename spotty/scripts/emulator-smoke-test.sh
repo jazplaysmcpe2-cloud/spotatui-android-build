@@ -387,9 +387,18 @@ sleep 12
 timeout 15s adb shell input keyevent 26
 sleep 22
 timeout 30s adb logcat -d -s SpottyPlaybackService:I > "$SERVICE_LOG"
-HEARTBEATS="$(grep -Fc "playback-heartbeat=playing" "$SERVICE_LOG" || true)"
+HEARTBEATS="$(grep -Fc "playback-heartbeat=playing position-ms=" "$SERVICE_LOG" || true)"
 if [[ "$HEARTBEATS" -lt 2 ]]; then
   echo "Background playback did not produce two real-player heartbeats across the screen-off interval."
+  cat "$SERVICE_LOG"
+  exit 1
+fi
+POSITIONS="$(grep "playback-heartbeat=playing position-ms=" "$SERVICE_LOG" | sed -n 's/.*position-ms=\\([0-9][0-9]*\\).*/\\1/p')"
+FIRST_POSITION="$(printf '%s\\n' "$POSITIONS" | head -n 1)"
+LAST_POSITION="$(printf '%s\\n' "$POSITIONS" | tail -n 1)"
+if [[ ! "$FIRST_POSITION" =~ ^[0-9]+$ || ! "$LAST_POSITION" =~ ^[0-9]+$ ]] || (( LAST_POSITION - FIRST_POSITION < 15000 )); then
+  echo "Audio position did not advance by at least 15 seconds during the background screen-off soak."
+  printf 'Recorded audio positions:\\n%s\\n' "$POSITIONS"
   cat "$SERVICE_LOG"
   exit 1
 fi
