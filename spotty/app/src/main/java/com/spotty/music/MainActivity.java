@@ -2555,6 +2555,7 @@ public final class MainActivity extends Activity {
             @Override public void draw(Canvas canvas) {
                 Rect bounds = getBounds();
                 float w = bounds.width(), h = bounds.height();
+                if (w <= 0f || h <= 0f) return;
                 int top = BG, bottom = BG;
                 switch (activeTheme) {
                     case "Frutiger Aero": top = Color.rgb(119, 215, 244); bottom = Color.rgb(232, 252, 255); break;
