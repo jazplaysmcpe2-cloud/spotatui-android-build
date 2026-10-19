@@ -2617,7 +2617,12 @@ public final class MainActivity extends Activity {
             window.setNavigationBarColor(BG);
             window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
         }
-        main.post(playerProgressTicker);
+        // UIAutomator's wait-for-idle check cannot settle while a debug smoke test
+        // continuously mutates SeekBar progress. Keep production refresh unchanged,
+        // but leave the test player sheet static long enough to inspect its controls.
+        boolean playbackSmokeTest = (getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0
+                && getIntent().getBooleanExtra("spotty_ci_smoke_playback", false);
+        if (!playbackSmokeTest) main.post(playerProgressTicker);
     }
 
     private void refreshPlayerSelection(Track track) {
