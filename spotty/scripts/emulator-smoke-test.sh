@@ -118,8 +118,16 @@ if ! dismiss_launcher_anr_dialog; then
   exit 1
 fi
 echo "[smoke] Verifying redesigned discovery home is rendered"
-timeout 20s adb shell uiautomator dump /sdcard/spotty-home-window.xml >/dev/null
-timeout 30s adb pull /sdcard/spotty-home-window.xml "$HOME_XML" >/dev/null
+for home_attempt in 1 2 3; do
+  timeout 20s adb shell uiautomator dump /sdcard/spotty-home-window.xml >/dev/null 2>&1 || true
+  timeout 30s adb pull /sdcard/spotty-home-window.xml "$HOME_XML" >/dev/null 2>&1 || true
+  if grep -Fq "FRESH FINDS" "$HOME_XML" && grep -Fq "Track, artist, mood, or a lyric" "$HOME_XML"; then
+    break
+  fi
+  echo "[smoke] Home accessibility tree was obscured; recovering system dialog (attempt $home_attempt)."
+  dismiss_launcher_anr_dialog || true
+  sleep 1
+done
 grep -Fq "FRESH FINDS" "$HOME_XML"
 grep -Fq "Track, artist, mood, or a lyric" "$HOME_XML"
 if grep -Fq "YouTube • Morphe" "$HOME_XML"; then
@@ -175,8 +183,14 @@ if ! dismiss_launcher_anr_dialog; then
   exit 1
 fi
 echo "[smoke] Verifying the real in-app player sheet while the WAV is playing"
-timeout 20s adb shell uiautomator dump /sdcard/spotty-player-window.xml >/dev/null
-timeout 30s adb pull /sdcard/spotty-player-window.xml "$PLAYER_XML" >/dev/null
+for player_attempt in 1 2 3; do
+  timeout 20s adb shell uiautomator dump /sdcard/spotty-player-window.xml >/dev/null 2>&1 || true
+  timeout 30s adb pull /sdcard/spotty-player-window.xml "$PLAYER_XML" >/dev/null 2>&1 || true
+  if grep -Fq "NOW PLAYING" "$PLAYER_XML"; then break; fi
+  echo "[smoke] Player accessibility tree was obscured; recovering system dialog (attempt $player_attempt)."
+  dismiss_launcher_anr_dialog || true
+  sleep 1
+done
 grep -Fq "NOW PLAYING" "$PLAYER_XML"
 grep -Fq "Spotty playback test" "$PLAYER_XML"
 grep -Fq "SOURCE" "$PLAYER_XML"
