@@ -7,6 +7,8 @@ import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
+import android.net.ConnectivityManager;
+import android.net.Network;
 import android.media.AudioAttributes;
 import android.media.AudioFocusRequest;
 import android.media.AudioManager;
@@ -56,6 +58,9 @@ public final class MusicPlaybackService extends Service {
     private boolean resumeOnFocusGain;
     private int retryCount;
     private boolean retryScheduled;
+    private long playbackStartedElapsed;
+    private ConnectivityManager connectivityManager;
+    private ConnectivityManager.NetworkCallback connectivityCallback;
     private JSONArray playbackQueue = new JSONArray();
     private int queueIndex;
     private AudioManager audioManager;
@@ -81,6 +86,11 @@ public final class MusicPlaybackService extends Service {
                     lastPlaybackHeartbeatElapsed = now;
                     Log.i("SpottyPlaybackService", "playback-heartbeat=playing");
                 }
+                // Backoff should reset only after a stable session, not when a stream
+                // starts and immediately fails again.
+                if (playbackStartedElapsed > 0L && now - playbackStartedElapsed >= 30000L) {
+                    retryCount = 0;
+                }
                 if (lastStatsTickElapsed > 0L && now >= lastStatsTickElapsed) {
                     pendingStatsMs += now - lastStatsTickElapsed;
                 }
@@ -91,6 +101,7 @@ public final class MusicPlaybackService extends Service {
             } else {
                 lastStatsTickElapsed = 0L;
                 lastPlaybackHeartbeatElapsed = 0L;
+                playbackStartedElapsed = 0L;
                 if (pendingStatsMs > 0L) flushPendingStatsTime();
             }
             handler.postDelayed(this, 1000L);
@@ -234,6 +245,7 @@ public final class MusicPlaybackService extends Service {
         wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, getPackageName() + ":audio-playback");
         wakeLock.setReferenceCounted(false);
         lastStatsPersistElapsed = SystemClock.elapsedRealtime();
+        registerConnectivityCallback();
         handler.postDelayed(statsTicker, 1000L);
     }
 
@@ -378,7 +390,7 @@ public final class MusicPlaybackService extends Service {
         next.setOnPreparedListener(mp -> {
             if (mediaPlayer != mp) return;
             preparing = false;
-            retryCount = 0;
+            playbackStartedElapsed = SystemClock.elapsedRealtime();
             retryScheduled = false;
             handler.removeCallbacks(retryRunnable);
             try {
@@ -466,7 +478,10 @@ public final class MusicPlaybackService extends Service {
         lastStatsTickElapsed = 0L;
         preparing = false;
         releaseCurrentPlayer();
-        releaseWakeLock();
+        // Keep the CPU awake while an intentional background stream is reconnecting;
+        // the delay is capped at 30 seconds and stop/failure paths always release the lock.
+        if (currentUrl.startsWith("http://") || currentUrl.startsWith("https://")) acquireWakeLock();
+        else releaseWakeLock();
 
         // A broken item should not block an entire playlist forever. Give it several
         // chances, then advance to another queued stream; a single remote/radio stream
@@ -626,6 +641,39 @@ public final class MusicPlaybackService extends Service {
         }
     }
 
+    private void registerConnectivityCallback() {
+        connectivityManager = (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
+        if (connectivityManager == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return;
+        connectivityCallback = new ConnectivityManager.NetworkCallback() {
+            @Override public void onAvailable(Network network) {
+                handler.post(() -> {
+                    if (!retryScheduled || currentUrl == null
+                            || !(currentUrl.startsWith("http://") || currentUrl.startsWith("https://"))
+                            || !getPreferences().getBoolean("playback_active", false)) return;
+                    Log.i("SpottyPlaybackService", "network-recovered=retrying-stream");
+                    handler.removeCallbacks(retryRunnable);
+                    retryScheduled = false;
+                    retryCount = Math.max(0, retryCount - 1);
+                    acquireWakeLock();
+                    prepareCurrentStream();
+                });
+            }
+        };
+        try {
+            connectivityManager.registerDefaultNetworkCallback(connectivityCallback);
+        } catch (RuntimeException e) {
+            Log.w("SpottyPlaybackService", "Could not register network recovery callback", e);
+            connectivityCallback = null;
+        }
+    }
+
+    private void unregisterConnectivityCallback() {
+        if (connectivityManager == null || connectivityCallback == null) return;
+        try { connectivityManager.unregisterNetworkCallback(connectivityCallback); }
+        catch (RuntimeException ignored) {}
+        connectivityCallback = null;
+    }
+
     private void acquireWakeLock() {
         try {
             if (wakeLock != null && !wakeLock.isHeld()) wakeLock.acquire();
@@ -742,6 +790,7 @@ public final class MusicPlaybackService extends Service {
     @Override public void onDestroy() {
         accountAndFlushListeningTime();
         handler.removeCallbacksAndMessages(null);
+        unregisterConnectivityCallback();
         releaseCurrentPlayer();
         releaseWakeLock();
         abandonAudioFocus();
