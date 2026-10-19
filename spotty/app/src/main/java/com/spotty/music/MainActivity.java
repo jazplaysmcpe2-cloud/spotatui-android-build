@@ -96,7 +96,9 @@ public final class MainActivity extends Activity {
     };
 
     private final Handler main = new Handler(Looper.getMainLooper());
-    private final ExecutorService io = Executors.newFixedThreadPool(6);
+    // Activity can be relaunched on configuration changes while provider jobs are in flight.
+    // Keep the bounded worker pool process-scoped so a stale Activity cannot shut it down mid-search.
+    private static final ExecutorService io = Executors.newFixedThreadPool(6);
     private String source = "all";
     private LinearLayout sourceRow;
     private EditText searchField;
@@ -3756,7 +3758,7 @@ public final class MainActivity extends Activity {
             try { unregisterReceiver(playbackStateReceiver); } catch (IllegalArgumentException ignored) {}
             playbackStateReceiver = null;
         }
-        io.shutdownNow();
+        // The process-scoped I/O pool must survive Activity recreation; do not shut it down here.
         main.removeCallbacksAndMessages(null);
         super.onDestroy();
     }
