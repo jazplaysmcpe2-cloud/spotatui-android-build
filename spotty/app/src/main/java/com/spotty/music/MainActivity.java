@@ -55,7 +55,8 @@ public final class MainActivity extends Activity {
     private static final String PREFS = "spotty_preferences";
     private static final String[] THEME_NAMES = {
             "Frutiger Aero", "Midwest Emo", "Synthwave", "Vaporwave",
-            "Cyberpunk", "Aurora Forest", "AMOLED"
+            "Cyberpunk", "Aurora Forest", "AMOLED", "Y2K Glass",
+            "Candy Pop", "Retro CRT", "Sunset Coast", "Dark Academia"
     };
     private static final String[] QUALITY_NAMES = {
             "Best available", "Prefer lossless", "Balanced (prefer high bitrate)", "Data saver"
@@ -354,6 +355,26 @@ public final class MainActivity extends Activity {
                 BG = Color.BLACK; PANEL = Color.rgb(17, 17, 21);
                 PANEL_ALT = Color.rgb(35, 35, 42); TEXT = Color.WHITE;
                 MUTED = Color.rgb(170, 170, 180); ACCENT = Color.rgb(133, 235, 158); break;
+            case "Y2K Glass":
+                BG = Color.rgb(24, 35, 75); PANEL = Color.rgb(50, 72, 125);
+                PANEL_ALT = Color.rgb(76, 111, 174); TEXT = Color.rgb(248, 253, 255);
+                MUTED = Color.rgb(192, 220, 245); ACCENT = Color.rgb(255, 224, 145); break;
+            case "Candy Pop":
+                BG = Color.rgb(54, 25, 57); PANEL = Color.rgb(95, 43, 91);
+                PANEL_ALT = Color.rgb(132, 59, 118); TEXT = Color.rgb(255, 245, 252);
+                MUTED = Color.rgb(238, 194, 224); ACCENT = Color.rgb(255, 172, 211); break;
+            case "Retro CRT":
+                BG = Color.rgb(8, 24, 18); PANEL = Color.rgb(15, 43, 30);
+                PANEL_ALT = Color.rgb(25, 67, 43); TEXT = Color.rgb(218, 255, 209);
+                MUTED = Color.rgb(139, 202, 137); ACCENT = Color.rgb(127, 255, 91); break;
+            case "Sunset Coast":
+                BG = Color.rgb(54, 28, 61); PANEL = Color.rgb(100, 49, 86);
+                PANEL_ALT = Color.rgb(143, 67, 98); TEXT = Color.rgb(255, 247, 235);
+                MUTED = Color.rgb(242, 194, 180); ACCENT = Color.rgb(255, 198, 119); break;
+            case "Dark Academia":
+                BG = Color.rgb(29, 26, 22); PANEL = Color.rgb(54, 45, 35);
+                PANEL_ALT = Color.rgb(78, 62, 45); TEXT = Color.rgb(247, 237, 213);
+                MUTED = Color.rgb(197, 179, 145); ACCENT = Color.rgb(214, 175, 91); break;
             case "Frutiger Aero":
             default:
                 activeTheme = "Frutiger Aero";
@@ -1191,9 +1212,37 @@ public final class MainActivity extends Activity {
             d.setStroke(dp(1), Color.argb(105, 132, 255, 230));
             return d;
         }
-        if ("Cyberpunk".equals(activeTheme)) {
+        if ("Cyberpunk".equals(activeTheme) || "Retro CRT".equals(activeTheme)) {
             GradientDrawable d = roundRect(PANEL, 15);
             d.setStroke(dp(1), ACCENT);
+            return d;
+        }
+        if ("Y2K Glass".equals(activeTheme)) {
+            GradientDrawable d = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
+                    new int[]{Color.rgb(79, 129, 188), Color.rgb(48, 62, 123)});
+            d.setCornerRadius(dp(18));
+            d.setStroke(dp(1), Color.argb(150, 210, 239, 255));
+            return d;
+        }
+        if ("Candy Pop".equals(activeTheme) || "Sunset Coast".equals(activeTheme)) {
+            GradientDrawable d = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
+                    new int[]{PANEL_ALT, PANEL});
+            d.setCornerRadius(dp(17));
+            d.setStroke(dp(1), Color.argb(100, 255, 220, 235));
+            return d;
+        }
+        if ("Synthwave".equals(activeTheme) || "Vaporwave".equals(activeTheme)) {
+            GradientDrawable d = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
+                    new int[]{PANEL_ALT, PANEL});
+            d.setCornerRadius(dp(16));
+            d.setStroke(dp(1), Color.argb(100, ACCENT));
+            return d;
+        }
+        if ("Dark Academia".equals(activeTheme)) {
+            GradientDrawable d = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
+                    new int[]{Color.rgb(76, 62, 43), Color.rgb(43, 37, 31)});
+            d.setCornerRadius(dp(15));
+            d.setStroke(dp(1), Color.argb(110, ACCENT));
             return d;
         }
         return roundRect(PANEL, 15);
