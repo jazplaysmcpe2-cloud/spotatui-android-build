@@ -14,6 +14,7 @@ import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.media.AudioAttributes;
 import android.media.MediaPlayer;
+import android.media.MediaMetadataRetriever;
 import android.os.Bundle;
 import android.os.Build;
 import android.os.Handler;
@@ -128,6 +129,7 @@ public final class MainActivity extends Activity {
         }
         loadCurrentSource("");
         startDebugOnlyPlaybackSmokeIfRequested();
+        startDebugOnlyStatsSmokeIfRequested();
         checkForUpdatesIfDue(false);
     }
 
@@ -440,13 +442,114 @@ public final class MainActivity extends Activity {
     private void showSettingsDialog() {
         new AlertDialog.Builder(this)
                 .setTitle("Spotty settings")
-                .setItems(new String[]{"Audio quality preference", "Check for updates now", "About Spotty"}, (dialog, which) -> {
+                .setItems(new String[]{"Audio quality preference", "Music stats", "Connect accounts", "Check for updates now", "About Spotty"}, (dialog, which) -> {
                     if (which == 0) showQualityDialog();
-                    else if (which == 1) checkForUpdatesIfDue(true);
+                    else if (which == 1) showMusicStatsDialog();
+                    else if (which == 2) showConnectionsDialog();
+                    else if (which == 3) checkForUpdatesIfDue(true);
                     else new AlertDialog.Builder(this).setTitle("Spotty")
-                            .setMessage("A source-first music and video discovery app. YouTube playback is handed to Morphe/YouTube. Spotty never claims to unlock Spotify Premium or upsample audio beyond the source quality.")
+                            .setMessage("A source-first music and video discovery app. YouTube playback is handed to Morphe/YouTube. Spotify, Google/YouTube and Last.fm account data are not yet linked to Spotty through OAuth. Spotty never claims to unlock Spotify Premium or upsample audio beyond source quality.")
                             .setPositiveButton("Done", null).show();
                 }).show();
+    }
+
+    private void showMusicStatsDialog() {
+        TextView body = text(MusicStats.buildSummaryText(this), 14, TEXT, false);
+        body.setPadding(dp(2), dp(5), dp(2), dp(8));
+        body.setTextIsSelectable(true);
+        body.setLineSpacing(dp(3), 1.05f);
+        ScrollView scroller = new ScrollView(this);
+        scroller.setFillViewport(false);
+        scroller.setVerticalScrollBarEnabled(true);
+        scroller.addView(body, new ScrollView.LayoutParams(-1, -2));
+        int availableHeight = Math.max(dp(260), getResources().getDisplayMetrics().heightPixels - dp(220));
+        scroller.setLayoutParams(new LinearLayout.LayoutParams(-1, Math.min(dp(540), availableHeight)));
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("Music stats")
+                .setView(scroller)
+                .setPositiveButton("Done", null)
+                .setNeutralButton("Refresh now", null)
+                .create();
+        Runnable refresh = new Runnable() {
+            @Override public void run() {
+                if (!dialog.isShowing()) return;
+                body.setText(MusicStats.buildSummaryText(MainActivity.this));
+                main.postDelayed(this, 1000L);
+            }
+        };
+        dialog.setOnShowListener(ignored -> {
+            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(v ->
+                    body.setText(MusicStats.buildSummaryText(MainActivity.this)));
+            main.post(refresh);
+        });
+        dialog.setOnDismissListener(ignored -> main.removeCallbacks(refresh));
+        dialog.show();
+    }
+
+    private void showConnectionsDialog() {
+        String explanation = "Account access status\n"
+                + "• YouTube: Spotty currently searches public catalog results; it does not hold a Google/YouTube account token.\n"
+                + "• YouTube Music: playback/search is handed to the official app or website; sign-in remains there.\n"
+                + "• Spotify: this Spotty app has no Spotify OAuth/API session. The legacy Spotatui build is separate.\n"
+                + "• .fmbot: its stats are based on Last.fm and Discord; it has no direct Spotty account API.\n\n"
+                + "These buttons open official services. They do not mark an account as connected or silently import private data. True in-app sync needs registered provider credentials and supported OAuth/API access.";
+        new AlertDialog.Builder(this)
+                .setTitle("Connect music accounts")
+                .setMessage(explanation)
+                .setItems(new String[]{"YouTube account", "YouTube Music", "Spotify sign-in", ".fmbot / Last.fm setup"}, (dialog, which) -> {
+                    if (which == 0) openServiceLink("https://www.youtube.com/account", new String[]{"com.google.android.youtube"});
+                    else if (which == 1) openServiceLink("https://music.youtube.com/", new String[]{"com.google.android.apps.youtube.music", "app.morphe.android.apps.youtube.music"});
+                    else if (which == 2) openServiceLink("https://accounts.spotify.com/login", new String[]{"com.spotify.music"});
+                    else openServiceLink("https://fm.bot/", new String[0]);
+                })
+                .setPositiveButton("Close", null)
+                .show();
+    }
+
+    private void openServiceLink(String url, String[] packageNames) {
+        for (String packageName : packageNames) {
+            try {
+                Intent appIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+                appIntent.setPackage(packageName);
+                startActivity(appIntent);
+                return;
+            } catch (Exception ignored) {}
+        }
+        try {
+            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
+        } catch (Exception e) {
+            statusText.setText("No installed app or browser can open this service.");
+        }
+    }
+
+    private Track enrichLocalTrackMetadata(Track track) {
+        if (track == null || !track.playUrl.startsWith("content://")) return track;
+        MediaMetadataRetriever retriever = new MediaMetadataRetriever();
+        try {
+            retriever.setDataSource(this, Uri.parse(track.playUrl));
+            String title = metadataValue(retriever, MediaMetadataRetriever.METADATA_KEY_TITLE, track.title);
+            String artist = metadataValue(retriever, MediaMetadataRetriever.METADATA_KEY_ARTIST, track.artist);
+            String album = metadataValue(retriever, MediaMetadataRetriever.METADATA_KEY_ALBUM, track.album);
+            String genre = track.genre;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                genre = metadataValue(retriever, MediaMetadataRetriever.METADATA_KEY_GENRE, genre);
+            }
+            return new Track(track.id, title, artist, track.subtitle, track.provider, track.playUrl,
+                    track.artworkUrl, track.license, album, genre, track.playlist);
+        } catch (Exception ignored) {
+            return track;
+        } finally {
+            try { retriever.release(); } catch (Exception ignored) {}
+        }
+    }
+
+    private String metadataValue(MediaMetadataRetriever retriever, int key, String fallback) {
+        try {
+            String value = retriever.extractMetadata(key);
+            if (value != null && !value.trim().isEmpty()) return value.trim();
+        } catch (Exception ignored) {}
+        return fallback == null ? "" : fallback;
     }
 
     private void showQualityDialog() {
@@ -1112,6 +1215,15 @@ public final class MainActivity extends Activity {
      * CI-only integration probe. It is inert in release APKs and accepts no caller-supplied
      * URL: the only test source is a WAV fixture copied into this app's private files dir.
      */
+    private void startDebugOnlyStatsSmokeIfRequested() {
+        if ((getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) == 0) return;
+        if (getIntent().getBooleanExtra("spotty_ci_smoke_stats", false)) {
+            main.postDelayed(this::showMusicStatsDialog, 1200L);
+        } else if (getIntent().getBooleanExtra("spotty_ci_smoke_connections", false)) {
+            main.postDelayed(this::showConnectionsDialog, 1200L);
+        }
+    }
+
     private void startDebugOnlyPlaybackSmokeIfRequested() {
         boolean debuggable = (getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0;
         if (!debuggable || !getIntent().getBooleanExtra("spotty_ci_smoke_playback", false)) return;
@@ -1499,8 +1611,9 @@ public final class MainActivity extends Activity {
                     String art = album == null ? "" : album.optString("cover_medium", "");
                     String title = item.optString("title", "Untitled track");
                     String link = item.optString("link", id.isEmpty() ? "https://www.deezer.com/" : "https://www.deezer.com/track/" + Uri.encode(id));
+                    String albumTitle = album == null ? "" : album.optString("title", "");
                     found.add(new Track(id, title, artist, "Deezer • official preview (typically 30 seconds)",
-                            "deezer-preview", preview, art, link));
+                            "deezer-preview", preview, art, link, albumTitle, "", ""));
                     if (found.size() >= 30) break;
                 }
                 main.post(() -> showTracks(found, found.isEmpty()
@@ -1552,7 +1665,9 @@ public final class MainActivity extends Activity {
                     JSONObject artwork = item.optJSONObject("artwork");
                     if (artwork != null) image = artwork.optString("150x150", "");
                     String url = "https://api.audius.co/v1/tracks/" + Uri.encode(id) + "/stream";
-                    found.add(new Track(id, title, artist, "Audius • free streaming", "audius", url, image, ""));
+                    String genre = item.optString("genre", "");
+                    found.add(new Track(id, title, artist, "Audius • free streaming", "audius",
+                            url, image, "", "", genre, ""));
                 }
                 main.post(() -> showTracks(found, found.isEmpty()
                         ? "No playable tracks found. Try another search or source." : found.size() + " tracks"));
@@ -1986,6 +2101,7 @@ public final class MainActivity extends Activity {
         activeBackgroundQueueIndex = -1;
         for (int i = 0; i < playable.size(); i++) {
             if (playable.get(i).playUrl.equals(current.playUrl)) {
+                playable.set(i, current);
                 activeBackgroundQueueIndex = i;
                 break;
             }
@@ -2002,6 +2118,10 @@ public final class MainActivity extends Activity {
                 item.put("url", track.playUrl);
                 item.put("title", track.title);
                 item.put("artist", track.artist);
+                item.put("album", track.album);
+                item.put("genre", track.genre);
+                item.put("playlist", track.playlist);
+                item.put("provider", track.provider);
                 serialized.put(item);
             } catch (Exception ignored) {}
         }
@@ -2009,23 +2129,24 @@ public final class MainActivity extends Activity {
     }
 
     private void beginPlayback(Track track) {
-        if (track.playUrl.isEmpty()) {
+        Track playableTrack = "local".equals(track.provider) ? enrichLocalTrackMetadata(track) : track;
+        if (playableTrack.playUrl.isEmpty()) {
             statusText.setText("No playable stream is available for this result.");
             return;
         }
         releasePlayer();
-        currentTrack = track;
+        currentTrack = playableTrack;
         paused = false;
         preparing = true;
-        nowPlayingText.setText(track.title + " — " + track.artist);
+        nowPlayingText.setText(playableTrack.title + " — " + playableTrack.artist);
         playPauseButton.setText("…");
         statusText.setText("Starting background audio…");
         boolean debugPlaybackSmoke = (getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0
                 && getIntent().getBooleanExtra("spotty_ci_smoke_playback", false);
         if (!debugPlaybackSmoke) requestNotificationPermissionIfNeeded();
         try {
-            String backgroundQueue = serializeBackgroundQueue(track);
-            MusicPlaybackService.play(this, track.playUrl, track.title, track.artist,
+            String backgroundQueue = serializeBackgroundQueue(playableTrack);
+            MusicPlaybackService.play(this, playableTrack.playUrl, playableTrack.title, playableTrack.artist,
                     backgroundQueue, activeBackgroundQueueIndex);
         } catch (Exception e) {
             preparing = false;
@@ -2251,9 +2372,17 @@ public final class MainActivity extends Activity {
         final String playUrl;
         final String artworkUrl;
         final String license;
+        final String album;
+        final String genre;
+        final String playlist;
 
         Track(String id, String title, String artist, String subtitle, String provider,
               String playUrl, String artworkUrl, String license) {
+            this(id, title, artist, subtitle, provider, playUrl, artworkUrl, license, "", "", "");
+        }
+
+        Track(String id, String title, String artist, String subtitle, String provider,
+              String playUrl, String artworkUrl, String license, String album, String genre, String playlist) {
             this.id = id == null ? "" : id;
             this.title = title == null || title.isEmpty() ? "Untitled" : title;
             this.artist = artist == null || artist.isEmpty() ? "Unknown artist" : artist;
@@ -2262,6 +2391,9 @@ public final class MainActivity extends Activity {
             this.playUrl = playUrl == null ? "" : playUrl;
             this.artworkUrl = artworkUrl == null ? "" : artworkUrl;
             this.license = license == null ? "" : license;
+            this.album = album == null ? "" : album.trim();
+            this.genre = genre == null ? "" : genre.trim();
+            this.playlist = playlist == null ? "" : playlist.trim();
         }
-    }
+    }    }
 }

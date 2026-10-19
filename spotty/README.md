@@ -67,3 +67,12 @@ The **Download licensed audio** action appears only on Internet Archive results.
 ## Updates
 
 On app launches, Spotty checks its GitHub releases feed and the official Morphe manager releases no more than once every 30 days (or when requested in Settings). It notifies when a new Morphe manager tag appears and links to the official release page. Spotty does not silently patch or replace Morphe/YouTube apps; review and apply patches in Morphe Manager yourself. Android still requires the user to confirm any Spotty APK installation. The build workflow runs monthly on the first day, builds the current default-branch revision, smoke-tests it on an Android API 35 emulator, captures an emulator screenshot, and publishes a release only if all checks pass. Dependabot checks GitHub Actions dependencies monthly.
+
+
+## Music stats and account handoffs
+
+**Music stats** records a play only after Spotty's in-app MediaPlayer successfully starts a track. It measures elapsed time while that player reports active playback, tracks local calendar days, and ranks artists/tracks plus album and genre metadata when a source supplies it. Metrics are stored on-device. The overview is an explainable local pattern summary, not a remote LLM or a personality diagnosis. The screen refreshes around once per second; the playback service checkpoints listened time periodically and on pause/stop rather than polling every millisecond.
+
+Stats describe playback performed by Spotty. Content handed to YouTube, YouTube Music, Spotify, SoundCloud or other external apps cannot be measured from Spotty alone. Album/genre/playlist rankings can be incomplete because sources do not consistently expose this metadata; unavailable rankings are shown as such rather than guessed. Metrics begin when this version first records playback and do not reconstruct old listening automatically.
+
+The **Connect accounts** menu opens official YouTube, YouTube Music, Spotify and .fmbot/Last.fm service pages/apps. These are sign-in entry points, not a claim that Spotty is already OAuth-connected. Spotty currently has no per-user Spotify API token, Google/YouTube OAuth token, or Last.fm/.fmbot integration. In-app synchronization requires registered provider credentials and supported OAuth/API access; .fmbot's documented workflow is based on Last.fm and Discord. YouTube Music does not provide an official general-purpose public account/playback API equivalent, so current supported behavior is external app/site handoff.

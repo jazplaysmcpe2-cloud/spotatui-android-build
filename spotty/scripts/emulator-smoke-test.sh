@@ -198,4 +198,24 @@ if grep -Eiq "FATAL EXCEPTION|ANR in com\\.spotty\\.music|am_anr.*com\\.spotty\\
 fi
 
 grep -Fq "playback-state=playing" "$SERVICE_LOG"
-echo "Spotty release install/launch and real local-WAV background media-service smoke tests passed."
+echo "[smoke] Checking Music stats screen and displayed metrics"
+timeout 30s adb shell am start -W -n com.spotty.music/.MainActivity --ez spotty_ci_smoke_stats true
+sleep 2
+timeout 20s adb shell uiautomator dump /sdcard/spotty-stats-window.xml >/dev/null 2>&1
+timeout 20s adb pull /sdcard/spotty-stats-window.xml "$GITHUB_WORKSPACE/release-output/spotty-stats-window.xml" >/dev/null
+grep -Eiq "Music stats" "$GITHUB_WORKSPACE/release-output/spotty-stats-window.xml"
+grep -Eiq "Days played" "$GITHUB_WORKSPACE/release-output/spotty-stats-window.xml"
+grep -Eiq "Minutes listened" "$GITHUB_WORKSPACE/release-output/spotty-stats-window.xml"
+grep -Eiq "Songs played" "$GITHUB_WORKSPACE/release-output/spotty-stats-window.xml"
+grep -Eiq "Taste overview" "$GITHUB_WORKSPACE/release-output/spotty-stats-window.xml"
+
+echo "[smoke] Checking account connection screen labels"
+timeout 30s adb shell am start -W -n com.spotty.music/.MainActivity --ez spotty_ci_smoke_connections true
+sleep 2
+timeout 20s adb shell uiautomator dump /sdcard/spotty-connections-window.xml >/dev/null 2>&1
+timeout 20s adb pull /sdcard/spotty-connections-window.xml "$GITHUB_WORKSPACE/release-output/spotty-connections-window.xml" >/dev/null
+grep -Eiq "Connect music accounts" "$GITHUB_WORKSPACE/release-output/spotty-connections-window.xml"
+grep -Eiq "YouTube account" "$GITHUB_WORKSPACE/release-output/spotty-connections-window.xml"
+grep -Eiq "Spotify sign-in" "$GITHUB_WORKSPACE/release-output/spotty-connections-window.xml"
+grep -Eiq "fmbot / Last.fm setup" "$GITHUB_WORKSPACE/release-output/spotty-connections-window.xml"
+echo "Spotty release install/launch, real local-WAV background playback, stats UI, and account entry-point smoke tests passed."

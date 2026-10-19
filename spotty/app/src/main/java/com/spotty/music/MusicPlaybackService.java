@@ -17,6 +17,7 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.PowerManager;
+import android.os.SystemClock;
 import android.util.Log;
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -50,6 +51,33 @@ public final class MusicPlaybackService extends Service {
     private AudioManager audioManager;
     private AudioFocusRequest audioFocusRequest;
     private PowerManager.WakeLock wakeLock;
+    private String currentAlbum = "";
+    private String currentGenre = "";
+    private String currentPlaylist = "";
+    private String currentSource = "";
+    private boolean trackPlayCounted;
+    private long lastStatsTickElapsed;
+    private long lastStatsPersistElapsed;
+    private long pendingStatsMs;
+
+    private final Runnable statsTicker = new Runnable() {
+        @Override public void run() {
+            long now = SystemClock.elapsedRealtime();
+            if (isPlayerActuallyPlaying()) {
+                if (lastStatsTickElapsed > 0L && now >= lastStatsTickElapsed) {
+                    pendingStatsMs += now - lastStatsTickElapsed;
+                }
+                lastStatsTickElapsed = now;
+                if (pendingStatsMs >= 5000L || now - lastStatsPersistElapsed >= 5000L) {
+                    flushPendingStatsTime();
+                }
+            } else {
+                lastStatsTickElapsed = 0L;
+                if (pendingStatsMs > 0L) flushPendingStatsTime();
+            }
+            handler.postDelayed(this, 1000L);
+        }
+    };
 
     private final AudioManager.OnAudioFocusChangeListener focusListener = change -> {
         if (mediaPlayer == null) return;
@@ -57,15 +85,20 @@ public final class MusicPlaybackService extends Service {
             mediaPlayer.setVolume(1f, 1f);
             if (resumeOnFocusGain) {
                 resumeOnFocusGain = false;
-                try { mediaPlayer.start(); setState("playing", "Playing"); }
-                catch (IllegalStateException ignored) { scheduleRetry("Audio focus returned"); }
+                try {
+                    mediaPlayer.start();
+                    lastStatsTickElapsed = SystemClock.elapsedRealtime();
+                    setState("playing", "Playing");
+                } catch (IllegalStateException ignored) { scheduleRetry("Audio focus returned"); }
             }
         } else if (change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK) {
             try { mediaPlayer.setVolume(0.25f, 0.25f); } catch (IllegalStateException ignored) {}
         } else if (change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) {
             try {
                 if (mediaPlayer.isPlaying()) {
+                    accountAndFlushListeningTime();
                     mediaPlayer.pause();
+                    lastStatsTickElapsed = 0L;
                     resumeOnFocusGain = true;
                     releaseWakeLock();
                     setState("paused", "Paused for another audio app");
@@ -73,8 +106,12 @@ public final class MusicPlaybackService extends Service {
             } catch (IllegalStateException ignored) {}
         } else if (change == AudioManager.AUDIOFOCUS_LOSS) {
             try {
-                if (mediaPlayer.isPlaying()) mediaPlayer.pause();
+                if (mediaPlayer.isPlaying()) {
+                    accountAndFlushListeningTime();
+                    mediaPlayer.pause();
+                }
             } catch (IllegalStateException ignored) {}
+            lastStatsTickElapsed = 0L;
             resumeOnFocusGain = false;
             releaseWakeLock();
             setState("paused", "Paused by audio focus");
@@ -160,6 +197,8 @@ public final class MusicPlaybackService extends Service {
         PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
         wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, getPackageName() + ":audio-playback");
         wakeLock.setReferenceCounted(false);
+        lastStatsPersistElapsed = SystemClock.elapsedRealtime();
+        handler.postDelayed(statsTicker, 1000L);
     }
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
@@ -173,15 +212,26 @@ public final class MusicPlaybackService extends Service {
             return START_STICKY;
         }
         if (ACTION_PLAY.equals(action)) {
+            accountAndFlushListeningTime();
+            lastStatsTickElapsed = 0L;
+            currentAlbum = "";
+            currentGenre = "";
+            currentPlaylist = "";
+            currentSource = "";
             currentUrl = intent.getStringExtra("url");
             currentTitle = safe(intent.getStringExtra("title"), "Untitled track");
             currentArtist = safe(intent.getStringExtra("artist"), "");
+            trackPlayCounted = false;
             retryCount = 0;
             restoreQueue(intent.getStringExtra("queue_json"), intent.getIntExtra("queue_index", 0));
             getPreferences().edit()
                     .putString("last_url", currentUrl)
                     .putString("last_title", currentTitle)
                     .putString("last_artist", currentArtist)
+                    .putString("last_album", currentAlbum)
+                    .putString("last_genre", currentGenre)
+                    .putString("last_playlist", currentPlaylist)
+                    .putString("last_source", currentSource)
                     .putString("queue_json", playbackQueue.toString())
                     .putInt("queue_index", queueIndex)
                     .putBoolean("playback_active", true)
@@ -194,6 +244,11 @@ public final class MusicPlaybackService extends Service {
             currentUrl = getPreferences().getString("last_url", "");
             currentTitle = getPreferences().getString("last_title", "Spotty");
             currentArtist = getPreferences().getString("last_artist", "");
+            currentAlbum = getPreferences().getString("last_album", "");
+            currentGenre = getPreferences().getString("last_genre", "");
+            currentPlaylist = getPreferences().getString("last_playlist", "");
+            currentSource = getPreferences().getString("last_source", "");
+            trackPlayCounted = true;
             restoreQueue(getPreferences().getString("queue_json", "[]"),
                     getPreferences().getInt("queue_index", 0));
             if (currentUrl.isEmpty()) {
@@ -240,10 +295,25 @@ public final class MusicPlaybackService extends Service {
                 only.put("url", currentUrl);
                 only.put("title", currentTitle);
                 only.put("artist", currentArtist);
+                only.put("album", currentAlbum);
+                only.put("genre", currentGenre);
+                only.put("playlist", currentPlaylist);
+                only.put("provider", currentSource);
                 playbackQueue.put(only);
             } catch (Exception ignored) {}
         }
         queueIndex = playbackQueue.length() == 0 ? 0 : Math.max(0, Math.min(index, playbackQueue.length() - 1));
+        JSONObject selected = playbackQueue.optJSONObject(queueIndex);
+        if (selected != null) {
+            currentTitle = safe(selected.optString("title", currentTitle), currentTitle);
+            currentArtist = safe(selected.optString("artist", currentArtist), currentArtist);
+            currentAlbum = safe(selected.optString("album", currentAlbum), "");
+            currentGenre = safe(selected.optString("genre", currentGenre), "");
+            currentPlaylist = safe(selected.optString("playlist", currentPlaylist), "");
+            currentSource = safe(selected.optString("provider", currentSource), inferSource(currentUrl));
+        } else if (currentSource.isEmpty()) {
+            currentSource = inferSource(currentUrl);
+        }
     }
 
     private void prepareCurrentStream() {
@@ -263,7 +333,19 @@ public final class MusicPlaybackService extends Service {
             try {
                 mp.start();
                 acquireWakeLock();
-                getPreferences().edit().putBoolean("playback_active", true).apply();
+                lastStatsTickElapsed = SystemClock.elapsedRealtime();
+                if (!trackPlayCounted) {
+                    MusicStats.recordTrackStarted(MusicPlaybackService.this, currentTitle, currentArtist,
+                            currentAlbum, currentGenre, currentPlaylist, currentSource);
+                    trackPlayCounted = true;
+                }
+                getPreferences().edit()
+                        .putBoolean("playback_active", true)
+                        .putString("last_album", currentAlbum)
+                        .putString("last_genre", currentGenre)
+                        .putString("last_playlist", currentPlaylist)
+                        .putString("last_source", currentSource)
+                        .apply();
                 setState("playing", "Playing");
             } catch (IllegalStateException e) {
                 scheduleRetry("Could not start stream");
@@ -271,6 +353,8 @@ public final class MusicPlaybackService extends Service {
         });
         next.setOnCompletionListener(mp -> {
             if (mediaPlayer != mp) return;
+            accountAndFlushListeningTime();
+            lastStatsTickElapsed = 0L;
             preparing = false;
             releaseCurrentPlayer();
             releaseWakeLock();
@@ -281,11 +365,20 @@ public final class MusicPlaybackService extends Service {
                     currentUrl = queued.optString("url", "");
                     currentTitle = safe(queued.optString("title", ""), "Untitled track");
                     currentArtist = safe(queued.optString("artist", ""), "");
+                    currentAlbum = safe(queued.optString("album", ""), "");
+                    currentGenre = safe(queued.optString("genre", ""), "");
+                    currentPlaylist = safe(queued.optString("playlist", ""), "");
+                    currentSource = safe(queued.optString("provider", ""), inferSource(currentUrl));
+                    trackPlayCounted = false;
                     retryCount = 0;
                     getPreferences().edit()
                             .putString("last_url", currentUrl)
                             .putString("last_title", currentTitle)
                             .putString("last_artist", currentArtist)
+                            .putString("last_album", currentAlbum)
+                            .putString("last_genre", currentGenre)
+                            .putString("last_playlist", currentPlaylist)
+                            .putString("last_source", currentSource)
                             .putString("queue_json", playbackQueue.toString())
                             .putInt("queue_index", queueIndex)
                             .putBoolean("playback_active", true)
@@ -315,6 +408,8 @@ public final class MusicPlaybackService extends Service {
     }
 
     private void scheduleRetry(String reason) {
+        accountAndFlushListeningTime();
+        lastStatsTickElapsed = 0L;
         preparing = false;
         releaseCurrentPlayer();
         releaseWakeLock();
@@ -335,7 +430,9 @@ public final class MusicPlaybackService extends Service {
         if (preparing) return;
         try {
             if (mediaPlayer.isPlaying()) {
+                accountAndFlushListeningTime();
                 mediaPlayer.pause();
+                lastStatsTickElapsed = 0L;
                 releaseWakeLock();
                 getPreferences().edit().putBoolean("playback_active", false).apply();
                 setState("paused", "Paused");
@@ -346,6 +443,7 @@ public final class MusicPlaybackService extends Service {
                 }
                 mediaPlayer.start();
                 acquireWakeLock();
+                lastStatsTickElapsed = SystemClock.elapsedRealtime();
                 getPreferences().edit().putBoolean("playback_active", true).apply();
                 setState("playing", "Playing");
             }
@@ -440,6 +538,8 @@ public final class MusicPlaybackService extends Service {
     }
 
     private void failAndStop(String message) {
+        accountAndFlushListeningTime();
+        lastStatsTickElapsed = 0L;
         preparing = false;
         setState("error", message);
         getPreferences().edit().putBoolean("playback_active", false).apply();
@@ -451,6 +551,8 @@ public final class MusicPlaybackService extends Service {
     }
 
     private void stopPlaybackAndSelf() {
+        accountAndFlushListeningTime();
+        lastStatsTickElapsed = 0L;
         handler.removeCallbacksAndMessages(null);
         setState("stopped", "Stopped");
         getPreferences().edit().putBoolean("playback_active", false).apply();
@@ -459,6 +561,41 @@ public final class MusicPlaybackService extends Service {
         abandonAudioFocus();
         stopForeground(STOP_FOREGROUND_REMOVE);
         stopSelf();
+    }
+
+    private boolean isPlayerActuallyPlaying() {
+        if (mediaPlayer == null || preparing) return false;
+        try { return mediaPlayer.isPlaying(); }
+        catch (IllegalStateException ignored) { return false; }
+    }
+
+    private void accountAndFlushListeningTime() {
+        if (lastStatsTickElapsed > 0L && isPlayerActuallyPlaying()) {
+            long now = SystemClock.elapsedRealtime();
+            if (now >= lastStatsTickElapsed) pendingStatsMs += now - lastStatsTickElapsed;
+        }
+        lastStatsTickElapsed = 0L;
+        flushPendingStatsTime();
+    }
+
+    private void flushPendingStatsTime() {
+        if (pendingStatsMs > 0L) {
+            long value = pendingStatsMs;
+            pendingStatsMs = 0L;
+            MusicStats.addListeningTime(this, value);
+        }
+        lastStatsPersistElapsed = SystemClock.elapsedRealtime();
+    }
+
+    private String inferSource(String url) {
+        if (url == null) return "";
+        String value = url.toLowerCase(java.util.Locale.ROOT);
+        if (value.startsWith("content://")) return "local";
+        if (value.contains("audius.co")) return "audius";
+        if (value.contains("archive.org")) return "archive-playable";
+        if (value.contains("deezer")) return "deezer-preview";
+        if (value.contains("radio")) return "radio";
+        return "";
     }
 
     private void abandonAudioFocus() {
@@ -484,6 +621,7 @@ public final class MusicPlaybackService extends Service {
     }
 
     @Override public void onDestroy() {
+        accountAndFlushListeningTime();
         handler.removeCallbacksAndMessages(null);
         releaseCurrentPlayer();
         releaseWakeLock();
