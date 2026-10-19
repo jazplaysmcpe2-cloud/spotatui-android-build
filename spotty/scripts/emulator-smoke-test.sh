@@ -199,6 +199,8 @@ fi
 
 grep -Fq "playback-state=playing" "$SERVICE_LOG"
 echo "[smoke] Checking Music stats screen and displayed metrics"
+# Force a fresh Activity so the debug test intent is processed by onCreate.
+timeout 20s adb shell am force-stop com.spotty.music
 timeout 30s adb shell am start -W -n com.spotty.music/.MainActivity --ez spotty_ci_smoke_stats true
 sleep 2
 timeout 20s adb shell uiautomator dump /sdcard/spotty-stats-window.xml >/dev/null 2>&1
@@ -210,6 +212,8 @@ grep -Eiq "Songs played" "$GITHUB_WORKSPACE/release-output/spotty-stats-window.x
 grep -Eiq "Taste overview" "$GITHUB_WORKSPACE/release-output/spotty-stats-window.xml"
 
 echo "[smoke] Checking account connection screen labels"
+# Each test entry point is handled only on creation; don't let Android reuse the previous screen.
+timeout 20s adb shell am force-stop com.spotty.music
 timeout 30s adb shell am start -W -n com.spotty.music/.MainActivity --ez spotty_ci_smoke_connections true
 sleep 2
 timeout 20s adb shell uiautomator dump /sdcard/spotty-connections-window.xml >/dev/null 2>&1
