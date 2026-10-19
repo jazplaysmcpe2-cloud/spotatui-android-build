@@ -17,6 +17,7 @@ test -s "$SMOKE_APK"
 
 SYSTEM_WARNING_LOG="$GITHUB_WORKSPACE/release-output/emulator-system-warnings.txt"
 WINDOW_XML="$GITHUB_WORKSPACE/release-output/emulator-window.xml"
+HOME_XML="$GITHUB_WORKSPACE/release-output/spotty-home-window.xml"
 
 # A no-window Android emulator can occasionally show "Pixel Launcher isn't responding"
 # over a healthy app. Dismiss that system dialog by locating its Wait button through UIAutomator.
@@ -115,6 +116,16 @@ if ! dismiss_launcher_anr_dialog; then
   echo "Unable to dismiss emulator-only launcher dialog; refusing to accept a contaminated screenshot."
   exit 1
 fi
+echo "[smoke] Verifying redesigned discovery home is rendered"
+timeout 20s adb shell uiautomator dump /sdcard/spotty-home-window.xml >/dev/null
+timeout 30s adb pull /sdcard/spotty-home-window.xml "$HOME_XML" >/dev/null
+grep -Fq "FRESH FINDS" "$HOME_XML"
+grep -Fq "Track, artist, mood, or a lyric" "$HOME_XML"
+if grep -Fq "YouTube • Morphe" "$HOME_XML"; then
+  echo "Legacy provider-selector UI was unexpectedly rendered."
+  exit 1
+fi
+echo "[smoke] Discovery heading, unified search field, and absence of the old provider row verified."
 echo "[smoke] Capturing signed release APK screenshot after system-dialog recovery"
 timeout 20s adb shell screencap -p /sdcard/spotty-smoke-test.png
 timeout 30s adb pull /sdcard/spotty-smoke-test.png "$SCREENSHOT"
