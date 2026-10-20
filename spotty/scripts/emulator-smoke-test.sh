@@ -454,6 +454,54 @@ grep -Fq "REPEAT OFF" "$PLAYER_XML"
 grep -Fq "ADD TO PLAYLIST" "$PLAYER_XML"
 echo "[smoke] Player title, seek control, shuffle, smart shuffle, repeat modes, and playlist action are visible."
 
+# Verify pause/resume through the real media service rather than only toggling a label.
+timeout 20s adb logcat -c
+tap_ui_exact "Ⅱ"
+sleep 1
+timeout 20s adb logcat -d -s SpottyPlaybackService:I > "$GITHUB_WORKSPACE/release-output/player-pause-log.txt"
+grep -Fq "playback-state=paused" "$GITHUB_WORKSPACE/release-output/player-pause-log.txt"
+timeout 20s adb logcat -c
+tap_ui_exact "▶"
+sleep 1
+timeout 20s adb logcat -d -s SpottyPlaybackService:I > "$GITHUB_WORKSPACE/release-output/player-resume-log.txt"
+grep -Fq "playback-state=playing" "$GITHUB_WORKSPACE/release-output/player-resume-log.txt"
+echo "[smoke] Pause and resume changed the real media-service state."
+
+# Drag the actual SeekBar and verify the decoded audio position jumps forward.
+timeout 20s adb logcat -c
+sleep 2
+timeout 20s adb logcat -d -s SpottyPlaybackService:I > "$GITHUB_WORKSPACE/release-output/player-seek-before.log"
+BASE_POSITION="$(awk -F'position-ms=' '/playback-heartbeat=playing position-ms=/ { value=$2; sub(/[^0-9].*/, "", value); if (value ~ /^[0-9]+$/) latest=value } END { if (latest != "") print latest }' "$GITHUB_WORKSPACE/release-output/player-seek-before.log")"
+[[ "$BASE_POSITION" =~ ^[0-9]+$ ]]
+timeout 20s adb shell uiautomator dump /sdcard/spotty-seek-window.xml >/dev/null 2>&1
+timeout 20s adb pull /sdcard/spotty-seek-window.xml "$GITHUB_WORKSPACE/release-output/spotty-seek-window.xml" >/dev/null
+IFS=',' read -r SEEK_X1 SEEK_Y SEEK_X2 <<< "$(python3 - "$GITHUB_WORKSPACE/release-output/spotty-seek-window.xml" <<'PY'
+import re, sys, xml.etree.ElementTree as ET
+root = ET.parse(sys.argv[1]).getroot()
+bars = []
+for node in root.iter("node"):
+    if node.attrib.get("class") == "android.widget.SeekBar":
+        bounds = [int(n) for n in re.findall(r"\d+", node.attrib.get("bounds", ""))]
+        if len(bounds) == 4 and bounds[2] - bounds[0] > 100:
+            bars.append(bounds)
+if not bars:
+    raise SystemExit("No visible player SeekBar was found.")
+left, top, right, bottom = max(bars, key=lambda b: b[2] - b[0])
+y = (top + bottom) // 2
+print(f"{left + (right-left)//10},{y},{left + (right-left)*65//100}")
+PY
+)"
+timeout 15s adb shell input swipe "$SEEK_X1" "$SEEK_Y" "$SEEK_X2" "$SEEK_Y" 500
+sleep 2
+timeout 20s adb logcat -d -s SpottyPlaybackService:I > "$GITHUB_WORKSPACE/release-output/player-seek-after.log"
+SEEK_POSITION="$(awk -F'position-ms=' '/playback-heartbeat=playing position-ms=/ { value=$2; sub(/[^0-9].*/, "", value); if (value ~ /^[0-9]+$/) latest=value } END { if (latest != "") print latest }' "$GITHUB_WORKSPACE/release-output/player-seek-after.log")"
+if [[ ! "$SEEK_POSITION" =~ ^[0-9]+$ ]] || (( SEEK_POSITION - BASE_POSITION < 60000 )); then
+  echo "Seek did not move the actual playback position forward by at least 60 seconds (before=$BASE_POSITION after=$SEEK_POSITION)."
+  cat "$GITHUB_WORKSPACE/release-output/player-seek-after.log"
+  exit 1
+fi
+echo "[smoke] Seeking moved real playback forward from \${BASE_POSITION}ms to \${SEEK_POSITION}ms."
+
 # Exercise mode state transitions, not just the presence of labels.
 tap_ui_contains "SHUFFLE"
 sleep 0.5
