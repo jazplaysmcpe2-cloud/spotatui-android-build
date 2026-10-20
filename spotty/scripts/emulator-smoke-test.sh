@@ -642,12 +642,21 @@ sleep 0.5
 timeout 20s adb shell uiautomator dump /sdcard/spotty-queue-reordered.xml >/dev/null 2>&1
 timeout 20s adb pull /sdcard/spotty-queue-reordered.xml "$GITHUB_WORKSPACE/release-output/spotty-queue-reordered.xml" >/dev/null
 python3 - "$GITHUB_WORKSPACE/release-output/spotty-queue-reordered.xml" <<'PY'
-import sys
-value = open(sys.argv[1], encoding="utf-8").read()
+import sys, xml.etree.ElementTree as ET
+path = sys.argv[1]
+value = open(path, encoding="utf-8").read()
 current = value.index("Spotty playback test")
-other_rows = [pos for title in ("Spotty queue second", "Spotty queue third") if (pos := value.find(title)) >= 0]
+other_rows = [pos for title in ("Spotty smart suggestion", "Spotty queue second", "Spotty queue third") if (pos := value.find(title)) >= 0]
 assert other_rows and min(other_rows) < current, "Move down did not move the playing row below another queued row."
 assert "Spotty queue second" in value and "Spotty queue third" in value, "Move down unexpectedly dropped another queue item."
+root = ET.parse(path).getroot()
+parents = {child: parent for parent in root.iter() for child in parent}
+title_node = next((node for node in root.iter("node") if node.attrib.get("text") == "Spotty playback test"), None)
+assert title_node is not None, "Playing track row disappeared after Move down."
+row = title_node
+while row is not None and not any(child.attrib.get("text") in ("01", "▶") for child in row.findall("node")):
+    row = parents.get(row)
+assert row is not None and any(child.attrib.get("text") == "▶" for child in row.findall("node")), "Move down did not preserve the play marker on the playing track."
 PY
 # Clear upcoming then remove the non-playing row; the current track must stay queued.
 tap_ui_contains "CLEAR UPCOMING"
