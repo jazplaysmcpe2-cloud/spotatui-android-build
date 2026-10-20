@@ -183,13 +183,18 @@ public final class MusicPlaybackService extends Service {
                 String playingUrl = service.currentUrl;
                 service.restoreQueue(queueJson, index);
                 int playingIndex = -1;
-                JSONObject playingEntry = null;
-                for (int i = 0; i < service.playbackQueue.length(); i++) {
-                    JSONObject entry = service.playbackQueue.optJSONObject(i);
-                    if (entry != null && playingUrl.equals(entry.optString("url", ""))) {
-                        playingIndex = i;
-                        playingEntry = entry;
-                        break;
+                JSONObject playingEntry = service.playbackQueue.optJSONObject(index);
+                if (playingEntry != null && playingUrl.equals(playingEntry.optString("url", ""))) {
+                    playingIndex = index;
+                } else {
+                    playingEntry = null;
+                    for (int i = 0; i < service.playbackQueue.length(); i++) {
+                        JSONObject entry = service.playbackQueue.optJSONObject(i);
+                        if (entry != null && playingUrl.equals(entry.optString("url", ""))) {
+                            playingIndex = i;
+                            playingEntry = entry;
+                            break;
+                        }
                     }
                 }
                 if (playingIndex >= 0) {
@@ -439,6 +444,8 @@ public final class MusicPlaybackService extends Service {
             handler.removeCallbacks(retryRunnable);
             try {
                 mp.start();
+                Log.i("SpottyPlaybackService", "playback-started title=" + currentTitle
+                        + " queue-index=" + queueIndex);
                 acquireWakeLock();
                 lastStatsTickElapsed = SystemClock.elapsedRealtime();
                 if (!trackPlayCounted) {
@@ -466,6 +473,8 @@ public final class MusicPlaybackService extends Service {
             releaseCurrentPlayer();
             releaseWakeLock();
             String repeatMode = getPreferences().getString("repeat_mode", "off");
+            Log.i("SpottyPlaybackService", "track-completed title=" + currentTitle
+                    + " repeat-mode=" + repeatMode + " queue-index=" + queueIndex);
             if ("track".equals(repeatMode)) {
                 retryCount = 0;
                 trackPlayCounted = false;
