@@ -517,8 +517,10 @@ timeout 20s adb pull /sdcard/spotty-queue-reordered.xml "$GITHUB_WORKSPACE/relea
 python3 - "$GITHUB_WORKSPACE/release-output/spotty-queue-reordered.xml" <<'PY'
 import sys
 value = open(sys.argv[1], encoding="utf-8").read()
-assert value.index("Spotty queue second") < value.index("Spotty playback test"), "Move down did not reorder the queue."
-assert "Spotty queue third" in value, "Move down unexpectedly dropped another queue item."
+current = value.index("Spotty playback test")
+other_rows = [pos for title in ("Spotty queue second", "Spotty queue third") if (pos := value.find(title)) >= 0]
+assert other_rows and min(other_rows) < current, "Move down did not move the playing row below another queued row."
+assert "Spotty queue second" in value and "Spotty queue third" in value, "Move down unexpectedly dropped another queue item."
 PY
 # Clear upcoming then remove the non-playing row; the current track must stay queued.
 tap_ui_contains "CLEAR UPCOMING"
