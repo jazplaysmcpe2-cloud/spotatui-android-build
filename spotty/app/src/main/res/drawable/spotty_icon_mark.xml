@@ -4,33 +4,48 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
+
+    <!-- An open orbit: Spotty is a listening space, not another locked garden. -->
     <path
         android:fillColor="#00FFFFFF"
-        android:strokeColor="#F7EBD9"
-        android:strokeWidth="4"
+        android:strokeColor="#E9FBFF"
+        android:strokeAlpha="0.82"
+        android:strokeWidth="3"
         android:strokeLineCap="round"
-        android:strokeLineJoin="round"
-        android:pathData="M54,18 C74,18 90,34 90,54 C90,74 74,90 54,90 C34,90 18,74 18,54 C18,34 34,18 54,18 Z" />
+        android:pathData="M54,14 C76,14 94,32 94,54 C94,76 76,94 54,94 C32,94 14,76 14,54 C14,32 32,14 54,14 Z" />
+
+    <!-- A small sunrise gives the mark its sense of warmth and forward motion. -->
+    <path
+        android:fillColor="#FFC78F"
+        android:pathData="M54,28 m-10,0 a10,10 0,1 0,20 0 a10,10 0,1 0,-20 0" />
     <path
         android:fillColor="#00FFFFFF"
-        android:strokeColor="#F7EBD9"
-        android:strokeWidth="7"
-        android:strokeLineCap="round"
-        android:strokeLineJoin="round"
-        android:pathData="M66,37 C61,31 49,31 43,37 C36,44 40,51 51,54 C62,56 70,61 65,70 C60,80 45,77 40,68" />
-    <path
-        android:fillColor="#E9B77C"
-        android:pathData="M74,25 m-4,0 a4,4 0,1 0,8 0 a4,4 0,1 0,-8 0" />
-    <path
-        android:fillColor="#8CE6D0"
-        android:pathData="M31,74 m-3,0 a3,3 0,1 0,6 0 a3,3 0,1 0,-6 0" />
-    <path
-        android:fillColor="#00FFFFFF"
-        android:strokeColor="#8CE6D0"
+        android:strokeColor="#F6FCFF"
         android:strokeWidth="3.5"
         android:strokeLineCap="round"
-        android:pathData="M77,49 L83,49 M80,46 L80,52" />
+        android:pathData="M34,47 C43,43 65,43 74,47" />
+
+    <!-- Two flowing sound-waves: loose and human rather than a generic play button. -->
     <path
-        android:fillColor="#F7EBD9"
-        android:pathData="M30,31 m-1.6,0 a1.6,1.6 0,1 0,3.2 0 a1.6,1.6 0,1 0,-3.2 0" />
+        android:fillColor="#00FFFFFF"
+        android:strokeColor="#F6FCFF"
+        android:strokeWidth="4.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M24,60 C31,53 38,53 45,60 C51,67 57,67 63,60 C69,53 76,53 84,60" />
+    <path
+        android:fillColor="#00FFFFFF"
+        android:strokeColor="#8FFFE0"
+        android:strokeWidth="3.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M32,72 C38,68 43,68 49,72 C55,76 61,76 67,72 C70,70 73,69 76,70" />
+
+    <!-- Small glints add the bright, analog-digital feeling without clutter. -->
+    <path
+        android:fillColor="#F6FCFF"
+        android:pathData="M79,25 L81,30 L86,32 L81,34 L79,39 L77,34 L72,32 L77,30 Z" />
+    <path
+        android:fillColor="#8FFFE0"
+        android:pathData="M27,39 m-2.2,0 a2.2,2.2 0,1 0,4.4 0 a2.2,2.2 0,1 0,-4.4 0" />
 </vector>
