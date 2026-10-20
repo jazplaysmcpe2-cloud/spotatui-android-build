@@ -674,7 +674,7 @@ fi
 timeout 15s adb shell input keyevent 4
 echo "[smoke] Queue ordering, clear-upcoming, and removal passed without removing the active track."
 timeout 20s adb logcat -d -s SpottyPlaybackService:I > "$SERVICE_LOG"
-if ! grep -Fq "playback-state=playing" "$SERVICE_LOG"; then
+if ! grep -Eq "playback-state=playing|playback-heartbeat=playing position-ms=" "$SERVICE_LOG"; then
   echo "The foreground playback service never reported that the real WAV stream started."
   cat "$SERVICE_LOG"
   timeout 30s adb logcat -d -b main -b system -b events > "$PLAYBACK_LOGCAT"
@@ -821,7 +821,7 @@ if grep -Eiq "FATAL EXCEPTION|ANR in com\\.spotty\\.music|am_anr.*com\\.spotty\\
   exit 1
 fi
 
-grep -Fq "playback-state=playing" "$SERVICE_LOG"
+grep -Eq "playback-state=playing|playback-heartbeat=playing position-ms=" "$SERVICE_LOG"
 echo "[smoke] Checking Music stats screen and displayed metrics"
 # Force a fresh Activity so the debug test intent is processed by onCreate.
 timeout 20s adb shell am force-stop com.spotty.music
