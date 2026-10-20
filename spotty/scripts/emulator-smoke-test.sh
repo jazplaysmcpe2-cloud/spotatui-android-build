@@ -424,6 +424,7 @@ timeout 20s adb shell run-as com.spotty.music mkdir -p files
 timeout 20s adb shell run-as com.spotty.music cp /data/local/tmp/spotty-ci-smoke.wav files/spotty-ci-smoke.wav
 timeout 20s adb shell run-as com.spotty.music cp /data/local/tmp/spotty-ci-short.wav files/spotty-ci-short-two.wav
 timeout 20s adb shell run-as com.spotty.music cp /data/local/tmp/spotty-ci-short.wav files/spotty-ci-short-three.wav
+timeout 20s adb shell run-as com.spotty.music cp /data/local/tmp/spotty-ci-short.wav files/spotty-ci-short-smart.wav
 timeout 20s adb logcat -c
 
 echo "[smoke] Launching the debug-only internal WAV test hook"
@@ -467,6 +468,20 @@ tap_ui_contains "SMART SHUFFLE"
 timeout 20s adb shell uiautomator dump /sdcard/spotty-mode-smart-on.xml >/dev/null 2>&1
 timeout 20s adb pull /sdcard/spotty-mode-smart-on.xml "$GITHUB_WORKSPACE/release-output/spotty-mode-smart-on.xml" >/dev/null
 grep -Fq "✦ SMART SHUFFLE" "$GITHUB_WORKSPACE/release-output/spotty-mode-smart-on.xml"
+# Smart Shuffle must add related playable suggestions to the queue without duplicate URLs.
+tap_ui_contains "Queue"
+sleep 0.5
+timeout 20s adb shell uiautomator dump /sdcard/spotty-smart-queue.xml >/dev/null 2>&1
+timeout 20s adb pull /sdcard/spotty-smart-queue.xml "$GITHUB_WORKSPACE/release-output/spotty-smart-queue.xml" >/dev/null
+python3 - "$GITHUB_WORKSPACE/release-output/spotty-smart-queue.xml" <<'PY'
+import sys, xml.etree.ElementTree as ET
+root = ET.parse(sys.argv[1]).getroot()
+texts = [node.attrib.get("text", "") for node in root.iter("node")]
+assert "Spotty smart suggestion" in texts, "Smart Shuffle did not append the related playable fixture."
+assert "Spotty smart suggestion duplicate" not in texts, "Smart Shuffle appended a duplicate URL."
+assert "Spotty queue second" in texts and "Spotty queue third" in texts, "Smart Shuffle discarded existing queued tracks."
+PY
+timeout 15s adb shell input keyevent 4
 tap_ui_contains "✦ SMART SHUFFLE"
 timeout 20s adb shell uiautomator dump /sdcard/spotty-mode-smart-off.xml >/dev/null 2>&1
 timeout 20s adb pull /sdcard/spotty-mode-smart-off.xml "$GITHUB_WORKSPACE/release-output/spotty-mode-smart-off.xml" >/dev/null
