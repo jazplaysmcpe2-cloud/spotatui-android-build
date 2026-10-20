@@ -1910,16 +1910,28 @@ public final class MainActivity extends Activity {
         boolean debuggable = (getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0;
         if (!debuggable || !getIntent().getBooleanExtra("spotty_ci_smoke_playback", false)) return;
         File fixture = new File(getFilesDir(), "spotty-ci-smoke.wav");
-        if (!fixture.isFile() || !fixture.canRead()) {
-            statusText.setText("CI playback fixture is missing");
+        File shortTwo = new File(getFilesDir(), "spotty-ci-short-two.wav");
+        File shortThree = new File(getFilesDir(), "spotty-ci-short-three.wav");
+        if (!fixture.isFile() || !fixture.canRead()
+                || !shortTwo.isFile() || !shortTwo.canRead()
+                || !shortThree.isFile() || !shortThree.canRead()) {
+            statusText.setText("CI playback fixtures are missing");
             return;
         }
         main.postDelayed(() -> {
             Track smokeTrack = new Track("ci-smoke", "Spotty playback test", "Local test tone",
                     "Local WAV • CI smoke test", "local",
                     fixture.getAbsolutePath(), "", "generated test tone");
+            Track shortTrackTwo = new Track("ci-smoke-2", "Spotty queue second", "Local test tone",
+                    "Short local WAV • CI repeat test", "local",
+                    shortTwo.getAbsolutePath(), "", "generated test tone");
+            Track shortTrackThree = new Track("ci-smoke-3", "Spotty queue third", "Local test tone",
+                    "Short local WAV • CI repeat test", "local",
+                    shortThree.getAbsolutePath(), "", "generated test tone");
             playbackQueue = new ArrayList<>();
             playbackQueue.add(smokeTrack);
+            playbackQueue.add(shortTrackTwo);
+            playbackQueue.add(shortTrackThree);
             playbackQueueIndex = 0;
             beginPlayback(smokeTrack);
             // The emulator gate also exercises the actual player sheet, not just the service.
@@ -3415,18 +3427,16 @@ public final class MainActivity extends Activity {
                 remove.setEnabled(!(MusicPlaybackService.hasTrack() && isCurrent));
                 up.setOnClickListener(v -> {
                     if (itemIndex <= 0) return;
-                    Track active = playbackQueueIndex >= 0 && playbackQueueIndex < playbackQueue.size()
-                            ? playbackQueue.get(playbackQueueIndex) : null;
                     Collections.swap(playbackQueue, itemIndex, itemIndex - 1);
-                    playbackQueueIndex = active == null ? playbackQueueIndex : playbackQueue.indexOf(active);
+                    if (playbackQueueIndex == itemIndex) playbackQueueIndex = itemIndex - 1;
+                    else if (playbackQueueIndex == itemIndex - 1) playbackQueueIndex = itemIndex;
                     persistUiQueue(); syncQueueToService(); refresh[0].run();
                 });
                 down.setOnClickListener(v -> {
                     if (itemIndex >= playbackQueue.size() - 1) return;
-                    Track active = playbackQueueIndex >= 0 && playbackQueueIndex < playbackQueue.size()
-                            ? playbackQueue.get(playbackQueueIndex) : null;
                     Collections.swap(playbackQueue, itemIndex, itemIndex + 1);
-                    playbackQueueIndex = active == null ? playbackQueueIndex : playbackQueue.indexOf(active);
+                    if (playbackQueueIndex == itemIndex) playbackQueueIndex = itemIndex + 1;
+                    else if (playbackQueueIndex == itemIndex + 1) playbackQueueIndex = itemIndex;
                     persistUiQueue(); syncQueueToService(); refresh[0].run();
                 });
                 remove.setOnClickListener(v -> {
@@ -3919,15 +3929,41 @@ public final class MainActivity extends Activity {
             if (candidate.playUrl == null || candidate.playUrl.isEmpty()) continue;
             if ("youtube".equals(candidate.provider) || "playlist-entry".equals(candidate.provider)) continue;
             String url = candidate.playUrl;
-            if (!(url.startsWith("https://") || url.startsWith("http://") || url.startsWith("content://"))) continue;
+            boolean ciPrivateFixture = (getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0
+                    && "local".equals(candidate.provider)
+                    && url.startsWith(getFilesDir().getAbsolutePath() + File.separator);
+            if (!(url.startsWith("https://") || url.startsWith("http://") || url.startsWith("content://")
+                    || ciPrivateFixture)) continue;
             playable.add(candidate);
         }
         activeBackgroundQueueIndex = -1;
-        for (int i = 0; i < playable.size(); i++) {
-            if (playable.get(i).playUrl.equals(current.playUrl)) {
-                playable.set(i, current);
-                activeBackgroundQueueIndex = i;
-                break;
+        // Preserve the selected queue slot, even when the same track/URL appears more than once.
+        if (playbackQueueIndex >= 0 && playbackQueueIndex < playbackQueue.size()) {
+            Track selected = playbackQueue.get(playbackQueueIndex);
+            if (selected.playUrl.equals(current.playUrl)) {
+                int filteredIndex = 0;
+                for (int i = 0; i < playbackQueueIndex; i++) {
+                    Track candidate = playbackQueue.get(i);
+                    String url = candidate.playUrl == null ? "" : candidate.playUrl;
+                    boolean ciPrivateFixture = (getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0
+                            && "local".equals(candidate.provider)
+                            && url.startsWith(getFilesDir().getAbsolutePath() + File.separator);
+                    if (!url.isEmpty() && !"youtube".equals(candidate.provider)
+                            && !"playlist-entry".equals(candidate.provider)
+                            && (url.startsWith("https://") || url.startsWith("http://")
+                            || url.startsWith("content://") || ciPrivateFixture)) filteredIndex++;
+                }
+                activeBackgroundQueueIndex = filteredIndex;
+                playable.set(activeBackgroundQueueIndex, current);
+            }
+        }
+        if (activeBackgroundQueueIndex < 0) {
+            for (int i = 0; i < playable.size(); i++) {
+                if (playable.get(i).playUrl.equals(current.playUrl)) {
+                    playable.set(i, current);
+                    activeBackgroundQueueIndex = i;
+                    break;
+                }
             }
         }
         if (activeBackgroundQueueIndex < 0) {
