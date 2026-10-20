@@ -528,7 +528,43 @@ if [[ ! "$SEEK_POSITION" =~ ^[0-9]+$ ]] || (( SEEK_POSITION - BASE_POSITION < 60
   cat "$GITHUB_WORKSPACE/release-output/player-seek-after.log"
   exit 1
 fi
-echo "[smoke] Seeking moved real playback forward from \${BASE_POSITION}ms to \${SEEK_POSITION}ms."
+echo "[smoke] Seeking moved real playback forward from ${BASE_POSITION}ms to ${SEEK_POSITION}ms."
+
+# Return playback near the beginning after proving forward seek works. Otherwise, the later
+# queue interactions can take long enough that this finite test WAV completes and advances
+# naturally, making the queue-clear assertion race playback completion instead of testing edits.
+timeout 20s adb shell uiautomator dump /sdcard/spotty-seek-reset-window.xml >/dev/null 2>&1
+timeout 20s adb pull /sdcard/spotty-seek-reset-window.xml "$GITHUB_WORKSPACE/release-output/spotty-seek-reset-window.xml" >/dev/null
+IFS="," read -r RESET_X1 RESET_Y RESET_X2 <<< "$(python3 - "$GITHUB_WORKSPACE/release-output/spotty-seek-reset-window.xml" <<'PY'
+import re, sys, xml.etree.ElementTree as ET
+root = ET.parse(sys.argv[1]).getroot()
+bars = []
+for node in root.iter("node"):
+    if node.attrib.get("class") == "android.widget.SeekBar":
+        bounds = [int(n) for n in re.findall(r"\d+", node.attrib.get("bounds", ""))]
+        if len(bounds) == 4 and bounds[2] - bounds[0] > 100:
+            bars.append(bounds)
+if not bars:
+    raise SystemExit("No visible player SeekBar was found for resetting the test fixture.")
+left, top, right, bottom = max(bars, key=lambda b: b[2] - b[0])
+y = (top + bottom) // 2
+print(f"{left + (right-left)*65//100},{y},{left + (right-left)//20}")
+PY
+)"
+timeout 15s adb shell input swipe "$RESET_X1" "$RESET_Y" "$RESET_X2" "$RESET_Y" 500
+RESET_POSITION=""
+for attempt in $(seq 1 20); do
+  sleep 2
+  timeout 20s adb logcat -d -s SpottyPlaybackService:I > "$GITHUB_WORKSPACE/release-output/player-seek-reset-log.txt"
+  RESET_POSITION="$(awk -F'position-ms=' '/playback-heartbeat=playing position-ms=/ { value=$2; sub(/[^0-9].*/, "", value); if (value ~ /^[0-9]+$/) latest=value } END { if (latest != "") print latest }' "$GITHUB_WORKSPACE/release-output/player-seek-reset-log.txt")"
+  [[ "$RESET_POSITION" =~ ^[0-9]+$ ]] && (( RESET_POSITION < 60000 )) && break
+done
+if [[ ! "$RESET_POSITION" =~ ^[0-9]+$ ]] || (( RESET_POSITION >= 60000 )); then
+  echo "Playback fixture did not seek back near the beginning (position=$RESET_POSITION)."
+  cat "$GITHUB_WORKSPACE/release-output/player-seek-reset-log.txt"
+  exit 1
+fi
+echo "[smoke] Reset long playback fixture to ${RESET_POSITION}ms so queue tests cannot race track completion."
 
 # Exercise mode state transitions, not just the presence of labels.
 tap_ui_contains "SHUFFLE"
