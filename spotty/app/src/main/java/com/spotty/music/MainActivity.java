@@ -207,7 +207,14 @@ public final class MainActivity extends Activity {
             nowPlayingText.setText(currentTrack.title + " — " + currentTrack.artist);
             playPauseButton.setText(MusicPlaybackService.isPlaying() ? "Ⅱ" : "▶");
         }
-        loadCurrentSource("");
+        // Avoid a real provider request racing the deterministic fixtures in debug-only
+        // emulator tests. Production launches still load the selected catalogue normally.
+        boolean debugSmokeSession = (getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0
+                && getIntent() != null
+                && (getIntent().getBooleanExtra("spotty_ci_smoke_playback", false)
+                || getIntent().getBooleanExtra("spotty_ci_smoke_stats", false)
+                || getIntent().getBooleanExtra("spotty_ci_smoke_connections", false));
+        if (!debugSmokeSession) loadCurrentSource("");
         startDebugOnlyPlaybackSmokeIfRequested();
         startDebugOnlyStatsSmokeIfRequested();
         checkForUpdatesIfDue(false);
