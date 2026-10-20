@@ -7,6 +7,8 @@ import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
+import android.net.ConnectivityManager;
+import android.net.Network;
 import android.media.AudioAttributes;
 import android.media.AudioFocusRequest;
 import android.media.AudioManager;
@@ -34,10 +36,13 @@ public final class MusicPlaybackService extends Service {
     public static final String ACTION_STATE = "com.spotty.music.action.PLAYBACK_STATE";
     private static final String CHANNEL_ID = "spotty_playback";
     private static final int NOTIFICATION_ID = 7401;
-    private static final int MAX_RETRIES = 2;
+    private static final int MAX_RETRIES_PER_TRACK = 4;
+    private static final long RETRY_BASE_DELAY_MS = 1500L;
+    private static final long RETRY_MAX_DELAY_MS = 30000L;
     private static volatile MusicPlaybackService instance;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
+    private final Runnable retryRunnable = this::runScheduledRetry;
     private MediaPlayer mediaPlayer;
     private String currentUrl = "";
     private String currentTitle = "Spotty";
@@ -46,6 +51,10 @@ public final class MusicPlaybackService extends Service {
     private boolean preparing;
     private boolean resumeOnFocusGain;
     private int retryCount;
+    private boolean retryScheduled;
+    private long playbackStartedElapsed;
+    private ConnectivityManager connectivityManager;
+    private ConnectivityManager.NetworkCallback connectivityCallback;
     private JSONArray playbackQueue = new JSONArray();
     private int queueIndex;
     private AudioManager audioManager;
@@ -58,12 +67,29 @@ public final class MusicPlaybackService extends Service {
     private boolean trackPlayCounted;
     private long lastStatsTickElapsed;
     private long lastStatsPersistElapsed;
+    private long lastPlaybackHeartbeatElapsed;
     private long pendingStatsMs;
+    private float userVolume = 1.0f;
+    private boolean audioDucked;
 
     private final Runnable statsTicker = new Runnable() {
         @Override public void run() {
             long now = SystemClock.elapsedRealtime();
             if (isPlayerActuallyPlaying()) {
+                // A heartbeat proves that MediaPlayer remains actively playing while the
+                // Activity is backgrounded or the display is off; CI uses it for soak checks.
+                if (lastPlaybackHeartbeatElapsed == 0L || now - lastPlaybackHeartbeatElapsed >= 15000L) {
+                    lastPlaybackHeartbeatElapsed = now;
+                    int positionMs = -1;
+                    try { if (mediaPlayer != null) positionMs = mediaPlayer.getCurrentPosition(); }
+                    catch (IllegalStateException ignored) {}
+                    Log.i("SpottyPlaybackService", "playback-heartbeat=playing position-ms=" + positionMs);
+                }
+                // Backoff should reset only after a stable session, not when a stream
+                // starts and immediately fails again.
+                if (playbackStartedElapsed > 0L && now - playbackStartedElapsed >= 30000L) {
+                    retryCount = 0;
+                }
                 if (lastStatsTickElapsed > 0L && now >= lastStatsTickElapsed) {
                     pendingStatsMs += now - lastStatsTickElapsed;
                 }
@@ -73,6 +99,8 @@ public final class MusicPlaybackService extends Service {
                 }
             } else {
                 lastStatsTickElapsed = 0L;
+                lastPlaybackHeartbeatElapsed = 0L;
+                playbackStartedElapsed = 0L;
                 if (pendingStatsMs > 0L) flushPendingStatsTime();
             }
             handler.postDelayed(this, 1000L);
@@ -82,17 +110,20 @@ public final class MusicPlaybackService extends Service {
     private final AudioManager.OnAudioFocusChangeListener focusListener = change -> {
         if (mediaPlayer == null) return;
         if (change == AudioManager.AUDIOFOCUS_GAIN) {
-            mediaPlayer.setVolume(1f, 1f);
+            audioDucked = false;
+            mediaPlayer.setVolume(userVolume, userVolume);
             if (resumeOnFocusGain) {
                 resumeOnFocusGain = false;
                 try {
                     mediaPlayer.start();
+                    acquireWakeLock();
                     lastStatsTickElapsed = SystemClock.elapsedRealtime();
                     setState("playing", "Playing");
                 } catch (IllegalStateException ignored) { scheduleRetry("Audio focus returned"); }
             }
         } else if (change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK) {
-            try { mediaPlayer.setVolume(0.25f, 0.25f); } catch (IllegalStateException ignored) {}
+            audioDucked = true;
+            try { mediaPlayer.setVolume(userVolume * 0.25f, userVolume * 0.25f); } catch (IllegalStateException ignored) {}
         } else if (change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) {
             try {
                 if (mediaPlayer.isPlaying()) {
@@ -142,6 +173,73 @@ public final class MusicPlaybackService extends Service {
     public static void stop(Context context) {
         MusicPlaybackService service = instance;
         if (service != null) service.stopPlaybackAndSelf();
+    }
+
+    public static void setVolume(Context context, float requestedVolume) {
+        if (context == null) return;
+        float bounded = clampVolume(requestedVolume);
+        context.getSharedPreferences("spotty_preferences", Context.MODE_PRIVATE)
+                .edit().putFloat("player_volume", bounded).apply();
+        MusicPlaybackService service = instance;
+        if (service != null) service.handler.post(() -> service.applyUserVolume(bounded));
+    }
+
+    private static float clampVolume(float value) {
+        if (Float.isNaN(value) || Float.isInfinite(value)) return 1.0f;
+        return Math.max(0.0f, Math.min(1.0f, value));
+    }
+
+    private void applyUserVolume(float requestedVolume) {
+        userVolume = clampVolume(requestedVolume);
+        if (mediaPlayer != null) {
+            float effectiveVolume = userVolume * (audioDucked ? 0.25f : 1.0f);
+            try { mediaPlayer.setVolume(effectiveVolume, effectiveVolume); }
+            catch (IllegalStateException ignored) {}
+        }
+    }
+
+    public static void updateQueue(Context context, String queueJson, int index, String repeatMode) {
+        android.content.SharedPreferences prefs = context.getSharedPreferences("spotty_preferences", Context.MODE_PRIVATE);
+        prefs.edit().putString("queue_json", queueJson == null ? "[]" : queueJson)
+                .putInt("queue_index", Math.max(0, index))
+                .putString("repeat_mode", repeatMode == null ? "off" : repeatMode)
+                .apply();
+        MusicPlaybackService service = instance;
+        if (service != null) {
+            service.handler.post(() -> {
+                String playingUrl = service.currentUrl;
+                service.restoreQueue(queueJson, index);
+                int playingIndex = -1;
+                JSONObject playingEntry = service.playbackQueue.optJSONObject(index);
+                if (playingEntry != null && playingUrl.equals(playingEntry.optString("url", ""))) {
+                    playingIndex = index;
+                } else {
+                    playingEntry = null;
+                    for (int i = 0; i < service.playbackQueue.length(); i++) {
+                        JSONObject entry = service.playbackQueue.optJSONObject(i);
+                        if (entry != null && playingUrl.equals(entry.optString("url", ""))) {
+                            playingIndex = i;
+                            playingEntry = entry;
+                            break;
+                        }
+                    }
+                }
+                if (playingIndex >= 0) {
+                    service.queueIndex = playingIndex;
+                    // Keep notification/player metadata aligned with the stream that never stopped.
+                    service.currentTitle = service.safe(playingEntry.optString("title", ""), service.currentTitle);
+                    service.currentArtist = service.safe(playingEntry.optString("artist", ""), service.currentArtist);
+                    service.currentAlbum = service.safe(playingEntry.optString("album", ""), service.currentAlbum);
+                    service.currentGenre = service.safe(playingEntry.optString("genre", ""), service.currentGenre);
+                    service.currentPlaylist = service.safe(playingEntry.optString("playlist", ""), service.currentPlaylist);
+                    service.currentSource = service.safe(playingEntry.optString("provider", ""), service.currentSource);
+                }
+                service.currentUrl = playingUrl;
+                prefs.edit().putInt("queue_index", service.queueIndex).apply();
+                service.updateNotification("Queue updated");
+                service.broadcast(service.state, service.state.equals("playing") ? "Playing" : service.state);
+            });
+        }
     }
 
     public static boolean hasTrack() {
@@ -209,12 +307,14 @@ public final class MusicPlaybackService extends Service {
     @Override public void onCreate() {
         super.onCreate();
         instance = this;
+        userVolume = clampVolume(getPreferences().getFloat("player_volume", 1.0f));
         createNotificationChannel();
         audioManager = (AudioManager) getSystemService(AUDIO_SERVICE);
         PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
         wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, getPackageName() + ":audio-playback");
         wakeLock.setReferenceCounted(false);
         lastStatsPersistElapsed = SystemClock.elapsedRealtime();
+        registerConnectivityCallback();
         handler.postDelayed(statsTicker, 1000L);
     }
 
@@ -229,13 +329,19 @@ public final class MusicPlaybackService extends Service {
             return START_STICKY;
         }
         if (ACTION_PLAY.equals(action)) {
+            handler.removeCallbacks(retryRunnable);
+            retryScheduled = false;
             accountAndFlushListeningTime();
             lastStatsTickElapsed = 0L;
             currentAlbum = "";
             currentGenre = "";
             currentPlaylist = "";
             currentSource = "";
-            currentUrl = intent.getStringExtra("url");
+            currentUrl = safe(intent.getStringExtra("url"), "");
+            if (currentUrl.isEmpty()) {
+                failAndStop("No playable audio URL was supplied");
+                return START_NOT_STICKY;
+            }
             currentTitle = safe(intent.getStringExtra("title"), "Untitled track");
             currentArtist = safe(intent.getStringExtra("artist"), "");
             trackPlayCounted = false;
@@ -333,13 +439,28 @@ public final class MusicPlaybackService extends Service {
         }
     }
 
+    private void runScheduledRetry() {
+        retryScheduled = false;
+        if (instance == this && currentUrl != null && !currentUrl.isEmpty()
+                && getPreferences().getBoolean("playback_active", false)) {
+            prepareCurrentStream();
+        }
+    }
+
     private void prepareCurrentStream() {
+        handler.removeCallbacks(retryRunnable);
+        retryScheduled = false;
+        if (currentUrl == null || currentUrl.trim().isEmpty()) {
+            failAndStop("No playable audio URL is available");
+            return;
+        }
         releaseCurrentPlayer();
         preparing = true;
         resumeOnFocusGain = false;
         setState("connecting", retryCount == 0 ? "Connecting" : "Reconnecting");
         MediaPlayer next = new MediaPlayer();
         mediaPlayer = next;
+        next.setVolume(userVolume, userVolume);
         next.setAudioAttributes(new AudioAttributes.Builder()
                 .setUsage(AudioAttributes.USAGE_MEDIA)
                 .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
@@ -347,8 +468,15 @@ public final class MusicPlaybackService extends Service {
         next.setOnPreparedListener(mp -> {
             if (mediaPlayer != mp) return;
             preparing = false;
+            playbackStartedElapsed = SystemClock.elapsedRealtime();
+            retryScheduled = false;
+            handler.removeCallbacks(retryRunnable);
             try {
+                float effectiveVolume = userVolume * (audioDucked ? 0.25f : 1.0f);
+                mp.setVolume(effectiveVolume, effectiveVolume);
                 mp.start();
+                Log.i("SpottyPlaybackService", "playback-started title=" + currentTitle
+                        + " queue-index=" + queueIndex);
                 acquireWakeLock();
                 lastStatsTickElapsed = SystemClock.elapsedRealtime();
                 if (!trackPlayCounted) {
@@ -375,8 +503,19 @@ public final class MusicPlaybackService extends Service {
             preparing = false;
             releaseCurrentPlayer();
             releaseWakeLock();
-            if (playbackQueue.length() > 1) {
-                queueIndex = (queueIndex + 1) % playbackQueue.length();
+            String repeatMode = getPreferences().getString("repeat_mode", "off");
+            Log.i("SpottyPlaybackService", "track-completed title=" + currentTitle
+                    + " repeat-mode=" + repeatMode + " queue-index=" + queueIndex);
+            if ("track".equals(repeatMode)) {
+                retryCount = 0;
+                trackPlayCounted = false;
+                setState("connecting", "Repeating track");
+                prepareCurrentStream();
+                return;
+            }
+            boolean hasNext = queueIndex + 1 < playbackQueue.length();
+            if (hasNext || ("playlist".equals(repeatMode) && playbackQueue.length() > 0)) {
+                queueIndex = hasNext ? queueIndex + 1 : 0;
                 JSONObject queued = playbackQueue.optJSONObject(queueIndex);
                 if (queued != null && !queued.optString("url", "").isEmpty()) {
                     currentUrl = queued.optString("url", "");
@@ -425,18 +564,83 @@ public final class MusicPlaybackService extends Service {
     }
 
     private void scheduleRetry(String reason) {
+        // MediaPlayer may emit more than one error for a single failed connection.
+        // Keep only one pending retry and don't let a stale callback replace a new track.
+        if (retryScheduled || currentUrl == null || currentUrl.isEmpty()) return;
         accountAndFlushListeningTime();
         lastStatsTickElapsed = 0L;
         preparing = false;
         releaseCurrentPlayer();
-        releaseWakeLock();
-        if (retryCount < MAX_RETRIES && !currentUrl.isEmpty()) {
-            retryCount++;
-            setState("connecting", reason + " • retry " + retryCount + "/" + MAX_RETRIES);
-            handler.postDelayed(this::prepareCurrentStream, retryCount == 1 ? 1200L : 3000L);
-        } else {
-            failAndStop(reason + " after retries");
+        // Keep the CPU awake while an intentional background stream is reconnecting;
+        // the delay is capped at 30 seconds and stop/failure paths always release the lock.
+        if (currentUrl.startsWith("http://") || currentUrl.startsWith("https://")) acquireWakeLock();
+        else releaseWakeLock();
+
+        // A broken item should not block an entire playlist forever. Give it several
+        // chances, then advance to another queued stream; a single remote/radio stream
+        // keeps reconnecting with bounded backoff until the listener stops it.
+        if (playbackQueue.length() > 1 && retryCount >= MAX_RETRIES_PER_TRACK
+                && advanceAfterRepeatedFailure(reason)) {
+            return;
         }
+
+        // Local document URIs won't heal when the file is permanently unreadable, so
+        // keep their retry budget bounded. Remote streams can recover after the network
+        // returns, so they remain alive and retry at intervals capped to 30 seconds.
+        boolean localUri = currentUrl.startsWith("content://") || currentUrl.startsWith("file://");
+        if (localUri && retryCount >= 3) {
+            failAndStop(reason + " • local file could not be opened");
+            return;
+        }
+
+        retryCount = Math.min(retryCount + 1, 1000);
+        int exponent = Math.min(Math.max(retryCount - 1, 0), 5);
+        long delayMs = Math.min(RETRY_BASE_DELAY_MS * (1L << exponent), RETRY_MAX_DELAY_MS);
+        retryScheduled = true;
+        setState("connecting", reason + " • retry " + retryCount
+                + " in " + Math.max(1L, delayMs / 1000L) + "s");
+        handler.removeCallbacks(retryRunnable);
+        handler.postDelayed(retryRunnable, delayMs);
+    }
+
+    private boolean advanceAfterRepeatedFailure(String reason) {
+        String failedUrl = currentUrl;
+        for (int offset = 1; offset < playbackQueue.length(); offset++) {
+            int candidateIndex = (queueIndex + offset) % playbackQueue.length();
+            JSONObject queued = playbackQueue.optJSONObject(candidateIndex);
+            if (queued == null) continue;
+            String candidateUrl = safe(queued.optString("url", ""), "");
+            if (candidateUrl.isEmpty() || candidateUrl.equals(failedUrl)) continue;
+
+            queueIndex = candidateIndex;
+            currentUrl = candidateUrl;
+            currentTitle = safe(queued.optString("title", ""), "Untitled track");
+            currentArtist = safe(queued.optString("artist", ""), "");
+            currentAlbum = safe(queued.optString("album", ""), "");
+            currentGenre = safe(queued.optString("genre", ""), "");
+            currentPlaylist = safe(queued.optString("playlist", ""), "");
+            currentSource = safe(queued.optString("provider", ""), inferSource(currentUrl));
+            trackPlayCounted = false;
+            retryCount = 0;
+            getPreferences().edit()
+                    .putString("last_url", currentUrl)
+                    .putString("last_title", currentTitle)
+                    .putString("last_artist", currentArtist)
+                    .putString("last_album", currentAlbum)
+                    .putString("last_genre", currentGenre)
+                    .putString("last_playlist", currentPlaylist)
+                    .putString("last_source", currentSource)
+                    .putString("queue_json", playbackQueue.toString())
+                    .putInt("queue_index", queueIndex)
+                    .putBoolean("playback_active", true)
+                    .apply();
+            retryScheduled = true;
+            setState("connecting", "Skipping unavailable track • " + reason);
+            handler.removeCallbacks(retryRunnable);
+            handler.postDelayed(retryRunnable, 300L);
+            return true;
+        }
+        return false;
     }
 
     private void togglePlayback() {
@@ -530,6 +734,39 @@ public final class MusicPlaybackService extends Service {
         }
     }
 
+    private void registerConnectivityCallback() {
+        connectivityManager = (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
+        if (connectivityManager == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return;
+        connectivityCallback = new ConnectivityManager.NetworkCallback() {
+            @Override public void onAvailable(Network network) {
+                handler.post(() -> {
+                    if (!retryScheduled || currentUrl == null
+                            || !(currentUrl.startsWith("http://") || currentUrl.startsWith("https://"))
+                            || !getPreferences().getBoolean("playback_active", false)) return;
+                    Log.i("SpottyPlaybackService", "network-recovered=retrying-stream");
+                    handler.removeCallbacks(retryRunnable);
+                    retryScheduled = false;
+                    retryCount = Math.max(0, retryCount - 1);
+                    acquireWakeLock();
+                    prepareCurrentStream();
+                });
+            }
+        };
+        try {
+            connectivityManager.registerDefaultNetworkCallback(connectivityCallback);
+        } catch (RuntimeException e) {
+            Log.w("SpottyPlaybackService", "Could not register network recovery callback", e);
+            connectivityCallback = null;
+        }
+    }
+
+    private void unregisterConnectivityCallback() {
+        if (connectivityManager == null || connectivityCallback == null) return;
+        try { connectivityManager.unregisterNetworkCallback(connectivityCallback); }
+        catch (RuntimeException ignored) {}
+        connectivityCallback = null;
+    }
+
     private void acquireWakeLock() {
         try {
             if (wakeLock != null && !wakeLock.isHeld()) wakeLock.acquire();
@@ -555,6 +792,8 @@ public final class MusicPlaybackService extends Service {
     }
 
     private void failAndStop(String message) {
+        handler.removeCallbacks(retryRunnable);
+        retryScheduled = false;
         accountAndFlushListeningTime();
         lastStatsTickElapsed = 0L;
         preparing = false;
@@ -568,6 +807,8 @@ public final class MusicPlaybackService extends Service {
     }
 
     private void stopPlaybackAndSelf() {
+        handler.removeCallbacks(retryRunnable);
+        retryScheduled = false;
         accountAndFlushListeningTime();
         lastStatsTickElapsed = 0L;
         handler.removeCallbacksAndMessages(null);
@@ -642,6 +883,7 @@ public final class MusicPlaybackService extends Service {
     @Override public void onDestroy() {
         accountAndFlushListeningTime();
         handler.removeCallbacksAndMessages(null);
+        unregisterConnectivityCallback();
         releaseCurrentPlayer();
         releaseWakeLock();
         abandonAudioFocus();
