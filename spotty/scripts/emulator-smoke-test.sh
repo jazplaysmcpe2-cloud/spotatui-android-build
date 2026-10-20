@@ -8,6 +8,7 @@ ERROR_LOG="$GITHUB_WORKSPACE/release-output/emulator-errors.txt"
 LOGCAT="$GITHUB_WORKSPACE/release-output/emulator-logcat.txt"
 SCREENSHOT="$GITHUB_WORKSPACE/release-output/emulator-smoke-test.png"
 WAV_FIXTURE="$GITHUB_WORKSPACE/release-output/spotty-ci-smoke.wav"
+SHORT_WAV_FIXTURE="$GITHUB_WORKSPACE/release-output/spotty-ci-short.wav"
 PLAYBACK_LOGCAT="$GITHUB_WORKSPACE/release-output/background-playback-logcat.txt"
 SERVICE_LOG="$GITHUB_WORKSPACE/release-output/background-playback-service.txt"
 SERVICE_DUMP="$GITHUB_WORKSPACE/release-output/background-playback-service-dump.txt"
@@ -392,13 +393,37 @@ with wave.open(path, "wb") as stream:
     stream.writeframes(samples.tobytes())
 print(f"Generated deterministic test audio: {frames} frames at {rate} Hz")
 PY
+python3 - "$SHORT_WAV_FIXTURE" <<'PY'
+import array
+import math
+import sys
+import wave
+
+path = sys.argv[1]
+rate = 44100
+seconds = 3
+frames = rate * seconds
+samples = array.array("h", (
+    int(1800 * math.sin(2.0 * math.pi * 660.0 * i / rate))
+    for i in range(frames)
+))
+with wave.open(path, "wb") as stream:
+    stream.setnchannels(1)
+    stream.setsampwidth(2)
+    stream.setframerate(rate)
+    stream.writeframes(samples.tobytes())
+print(f"Generated repeat-test audio: {frames} frames at {rate} Hz")
+PY
 
 echo "[smoke] Switching to debug-only test APK to exercise real local-file playback"
 timeout 30s adb uninstall com.spotty.music
 timeout 90s adb install "$SMOKE_APK"
 timeout 30s adb push "$WAV_FIXTURE" /data/local/tmp/spotty-ci-smoke.wav
+timeout 30s adb push "$SHORT_WAV_FIXTURE" /data/local/tmp/spotty-ci-short.wav
 timeout 20s adb shell run-as com.spotty.music mkdir -p files
 timeout 20s adb shell run-as com.spotty.music cp /data/local/tmp/spotty-ci-smoke.wav files/spotty-ci-smoke.wav
+timeout 20s adb shell run-as com.spotty.music cp /data/local/tmp/spotty-ci-short.wav files/spotty-ci-short-two.wav
+timeout 20s adb shell run-as com.spotty.music cp /data/local/tmp/spotty-ci-short.wav files/spotty-ci-short-three.wav
 timeout 20s adb logcat -c
 
 echo "[smoke] Launching the debug-only internal WAV test hook"
@@ -427,14 +452,89 @@ grep -Fq "SMART SHUFFLE" "$PLAYER_XML"
 grep -Fq "REPEAT OFF" "$PLAYER_XML"
 grep -Fq "ADD TO PLAYLIST" "$PLAYER_XML"
 echo "[smoke] Player title, seek control, shuffle, smart shuffle, repeat modes, and playlist action are visible."
+
+# Exercise mode state transitions, not just the presence of labels.
+tap_ui_contains "SHUFFLE"
+sleep 0.5
+timeout 20s adb shell uiautomator dump /sdcard/spotty-mode-shuffle-on.xml >/dev/null 2>&1
+timeout 20s adb pull /sdcard/spotty-mode-shuffle-on.xml "$GITHUB_WORKSPACE/release-output/spotty-mode-shuffle-on.xml" >/dev/null
+grep -Fq "✓ SHUFFLE" "$GITHUB_WORKSPACE/release-output/spotty-mode-shuffle-on.xml"
+tap_ui_contains "✓ SHUFFLE"
+timeout 20s adb shell uiautomator dump /sdcard/spotty-mode-shuffle-off.xml >/dev/null 2>&1
+timeout 20s adb pull /sdcard/spotty-mode-shuffle-off.xml "$GITHUB_WORKSPACE/release-output/spotty-mode-shuffle-off.xml" >/dev/null
+grep -Fq 'text="SHUFFLE"' "$GITHUB_WORKSPACE/release-output/spotty-mode-shuffle-off.xml"
+tap_ui_contains "SMART SHUFFLE"
+timeout 20s adb shell uiautomator dump /sdcard/spotty-mode-smart-on.xml >/dev/null 2>&1
+timeout 20s adb pull /sdcard/spotty-mode-smart-on.xml "$GITHUB_WORKSPACE/release-output/spotty-mode-smart-on.xml" >/dev/null
+grep -Fq "✦ SMART SHUFFLE" "$GITHUB_WORKSPACE/release-output/spotty-mode-smart-on.xml"
+tap_ui_contains "✦ SMART SHUFFLE"
+timeout 20s adb shell uiautomator dump /sdcard/spotty-mode-smart-off.xml >/dev/null 2>&1
+timeout 20s adb pull /sdcard/spotty-mode-smart-off.xml "$GITHUB_WORKSPACE/release-output/spotty-mode-smart-off.xml" >/dev/null
+grep -Fq 'text="SMART SHUFFLE"' "$GITHUB_WORKSPACE/release-output/spotty-mode-smart-off.xml"
+tap_ui_contains "REPEAT OFF"
+tap_ui_contains "REPEAT PLAYLIST"
+timeout 20s adb shell uiautomator dump /sdcard/spotty-mode-repeat-track.xml >/dev/null 2>&1
+timeout 20s adb pull /sdcard/spotty-mode-repeat-track.xml "$GITHUB_WORKSPACE/release-output/spotty-mode-repeat-track.xml" >/dev/null
+grep -Fq "REPEAT TRACK" "$GITHUB_WORKSPACE/release-output/spotty-mode-repeat-track.xml"
+tap_ui_contains "REPEAT TRACK"
+timeout 20s adb shell uiautomator dump /sdcard/spotty-mode-repeat-off.xml >/dev/null 2>&1
+timeout 20s adb pull /sdcard/spotty-mode-repeat-off.xml "$GITHUB_WORKSPACE/release-output/spotty-mode-repeat-off.xml" >/dev/null
+grep -Fq "REPEAT OFF" "$GITHUB_WORKSPACE/release-output/spotty-mode-repeat-off.xml"
+echo "[smoke] Shuffle, smart-shuffle and repeat controls changed to the expected persisted modes."
+
+# Check the actual library toggle and named-playlist create/persist paths.
+tap_ui_contains "ADD TO YOUR LIBRARY"
+timeout 20s adb shell uiautomator dump /sdcard/spotty-favorite-on.xml >/dev/null 2>&1
+timeout 20s adb pull /sdcard/spotty-favorite-on.xml "$GITHUB_WORKSPACE/release-output/spotty-favorite-on.xml" >/dev/null
+grep -Fq "SAVED TO YOUR LIBRARY" "$GITHUB_WORKSPACE/release-output/spotty-favorite-on.xml"
+tap_ui_contains "ADD TO PLAYLIST"
+sleep 1
+timeout 20s adb shell uiautomator dump /sdcard/spotty-playlist-create.xml >/dev/null 2>&1
+timeout 20s adb pull /sdcard/spotty-playlist-create.xml "$GITHUB_WORKSPACE/release-output/spotty-playlist-create.xml" >/dev/null
+grep -Fq "Name your playlist" "$GITHUB_WORKSPACE/release-output/spotty-playlist-create.xml"
+tap_ui_contains "Create"
+sleep 1
+timeout 20s adb shell run-as com.spotty.music cat shared_prefs/spotty_preferences.xml > "$GITHUB_WORKSPACE/release-output/spotty-prefs-after-playlist.xml"
+grep -Fq "user_playlists_json" "$GITHUB_WORKSPACE/release-output/spotty-prefs-after-playlist.xml"
+grep -Fq "My playlist" "$GITHUB_WORKSPACE/release-output/spotty-prefs-after-playlist.xml"
+grep -Fq "favorite_tracks_json" "$GITHUB_WORKSPACE/release-output/spotty-prefs-after-playlist.xml"
+echo "[smoke] Favorite persistence and named playlist creation were written to app preferences."
+
 tap_ui_contains "Queue"
 sleep 1
 timeout 20s adb shell uiautomator dump /sdcard/spotty-queue-window.xml >/dev/null 2>&1
 timeout 20s adb pull /sdcard/spotty-queue-window.xml "$GITHUB_WORKSPACE/release-output/spotty-queue-window.xml" >/dev/null
-grep -Fq "Playing queue" "$GITHUB_WORKSPACE/release-output/spotty-queue-window.xml"
-grep -Fq "Spotty playback test" "$GITHUB_WORKSPACE/release-output/spotty-queue-window.xml"
+QUEUE_XML="$GITHUB_WORKSPACE/release-output/spotty-queue-window.xml"
+grep -Fq "Playing queue" "$QUEUE_XML"
+grep -Fq "Spotty playback test" "$QUEUE_XML"
+grep -Fq "Spotty queue second" "$QUEUE_XML"
+grep -Fq "Spotty queue third" "$QUEUE_XML"
+# Move the playing row down and confirm the active queue slot moves with it.
+tap_ui_contains "Move down"
+sleep 0.5
+timeout 20s adb shell uiautomator dump /sdcard/spotty-queue-reordered.xml >/dev/null 2>&1
+timeout 20s adb pull /sdcard/spotty-queue-reordered.xml "$GITHUB_WORKSPACE/release-output/spotty-queue-reordered.xml" >/dev/null
+python3 - "$GITHUB_WORKSPACE/release-output/spotty-queue-reordered.xml" <<'PY'
+import sys
+value = open(sys.argv[1], encoding="utf-8").read()
+assert value.index("Spotty queue second") < value.index("Spotty playback test"), "Move down did not reorder the queue."
+assert "Spotty queue third" in value, "Move down unexpectedly dropped another queue item."
+PY
+# Clear upcoming then remove the non-playing row; the current track must stay queued.
+tap_ui_contains "CLEAR UPCOMING"
+sleep 0.5
+tap_ui_contains "Remove from queue"
+sleep 0.5
+timeout 20s adb shell uiautomator dump /sdcard/spotty-queue-final.xml >/dev/null 2>&1
+timeout 20s adb pull /sdcard/spotty-queue-final.xml "$GITHUB_WORKSPACE/release-output/spotty-queue-final.xml" >/dev/null
+grep -Fq "Spotty playback test" "$GITHUB_WORKSPACE/release-output/spotty-queue-final.xml"
+if grep -Fq "Spotty queue second" "$GITHUB_WORKSPACE/release-output/spotty-queue-final.xml" || grep -Fq "Spotty queue third" "$GITHUB_WORKSPACE/release-output/spotty-queue-final.xml"; then
+  echo "Queue clear/remove did not preserve only the expected playing track."
+  cat "$GITHUB_WORKSPACE/release-output/spotty-queue-final.xml"
+  exit 1
+fi
 timeout 15s adb shell input keyevent 4
-echo "[smoke] The editable queue lists the current track."
+echo "[smoke] Queue ordering, clear-upcoming, and removal passed without removing the active track."
 timeout 20s adb logcat -d -s SpottyPlaybackService:I > "$SERVICE_LOG"
 if ! grep -Fq "playback-state=playing" "$SERVICE_LOG"; then
   echo "The foreground playback service never reported that the real WAV stream started."
@@ -500,6 +600,62 @@ if [ -z "$PID" ]; then
 fi
 echo "[smoke] Screen-off soak passed with $HEARTBEATS live playback heartbeats and foreground service intact."
 timeout 30s adb logcat -d -b main -b system -b events > "$PLAYBACK_LOGCAT"
+
+# A fresh debug-only run verifies persisted library/playlist state and repeat behaviour
+# against real short local WAVs; no public streaming endpoint is involved.
+timeout 20s adb shell am force-stop com.spotty.music
+timeout 20s adb logcat -c
+timeout 30s adb shell am start -W -f 0x10008000 -n com.spotty.music/.MainActivity --ez spotty_ci_smoke_playback true
+sleep 3
+timeout 20s adb shell uiautomator dump /sdcard/spotty-persistence-window.xml >/dev/null 2>&1
+timeout 20s adb pull /sdcard/spotty-persistence-window.xml "$GITHUB_WORKSPACE/release-output/spotty-persistence-window.xml" >/dev/null
+grep -Fq "SAVED TO YOUR LIBRARY" "$GITHUB_WORKSPACE/release-output/spotty-persistence-window.xml"
+tap_ui_contains "ADD TO PLAYLIST"
+sleep 0.5
+timeout 20s adb shell uiautomator dump /sdcard/spotty-playlist-persisted.xml >/dev/null 2>&1
+timeout 20s adb pull /sdcard/spotty-playlist-persisted.xml "$GITHUB_WORKSPACE/release-output/spotty-playlist-persisted.xml" >/dev/null
+grep -Fq "My playlist" "$GITHUB_WORKSPACE/release-output/spotty-playlist-persisted.xml"
+grep -Fq "1 tracks" "$GITHUB_WORKSPACE/release-output/spotty-playlist-persisted.xml"
+timeout 15s adb shell input keyevent 4
+
+# Repeat track must really restart the selected short file after MediaPlayer completion.
+tap_ui_contains "REPEAT OFF"
+tap_ui_contains "REPEAT PLAYLIST"
+timeout 20s adb shell uiautomator dump /sdcard/spotty-repeat-track-window.xml >/dev/null 2>&1
+timeout 20s adb pull /sdcard/spotty-repeat-track-window.xml "$GITHUB_WORKSPACE/release-output/spotty-repeat-track-window.xml" >/dev/null
+grep -Fq "REPEAT TRACK" "$GITHUB_WORKSPACE/release-output/spotty-repeat-track-window.xml"
+tap_ui_contains "⏭"
+sleep 8
+timeout 30s adb logcat -d -s SpottyPlaybackService:I > "$SERVICE_LOG"
+grep -Fq "track-completed title=Spotty queue second repeat-mode=track" "$SERVICE_LOG"
+STARTS_OF_SECOND="$(grep -Fc 'playback-started title=Spotty queue second' "$SERVICE_LOG" || true)"
+if [[ "$STARTS_OF_SECOND" -lt 2 ]]; then
+  echo "Repeat-track did not start the selected track at least twice (starts=$STARTS_OF_SECOND)."
+  cat "$SERVICE_LOG"
+  exit 1
+fi
+echo "[smoke] Repeat-track restarted the real selected audio after completion."
+
+# Repeat playlist must wrap from the final short track back to the first long track.
+timeout 20s adb shell am force-stop com.spotty.music
+timeout 20s adb logcat -c
+timeout 30s adb shell am start -W -f 0x10008000 -n com.spotty.music/.MainActivity --ez spotty_ci_smoke_playback true
+sleep 3
+tap_ui_contains "REPEAT TRACK"
+tap_ui_contains "REPEAT OFF"
+timeout 20s adb shell uiautomator dump /sdcard/spotty-repeat-playlist-window.xml >/dev/null 2>&1
+timeout 20s adb pull /sdcard/spotty-repeat-playlist-window.xml "$GITHUB_WORKSPACE/release-output/spotty-repeat-playlist-window.xml" >/dev/null
+grep -Fq "REPEAT PLAYLIST" "$GITHUB_WORKSPACE/release-output/spotty-repeat-playlist-window.xml"
+tap_ui_contains "⏭"
+sleep 0.5
+tap_ui_contains "⏭"
+sleep 8
+timeout 30s adb logcat -d -s SpottyPlaybackService:I > "$SERVICE_LOG"
+grep -Fq "track-completed title=Spotty queue third repeat-mode=playlist" "$SERVICE_LOG"
+grep -Fq "playback-started title=Spotty playback test queue-index=0" "$SERVICE_LOG"
+echo "[smoke] Repeat-playlist advanced through real queue items and wrapped to the first track."
+timeout 20s adb shell am force-stop com.spotty.music
+timeout 20s adb logcat -c
 if grep -Eiq "FATAL EXCEPTION|ANR in com\\.spotty\\.music|am_anr.*com\\.spotty\\.music|Input dispatching timed out.*com\\.spotty\\.music|Process: com\\.spotty\\.music" "$PLAYBACK_LOGCAT"; then
   echo "Spotty crashed or became unresponsive during background playback."
   grep -Ei "FATAL EXCEPTION|ANR in com\\.spotty\\.music|am_anr.*com\\.spotty\\.music|Input dispatching timed out.*com\\.spotty\\.music|Process: com\\.spotty\\.music" "$PLAYBACK_LOGCAT" > "$ERROR_LOG" || true
