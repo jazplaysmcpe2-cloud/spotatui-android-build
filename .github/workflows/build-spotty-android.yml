@@ -143,7 +143,7 @@ jobs:
           test -w /dev/kvm
           "$ANDROID_HOME/emulator/emulator" -accel-check
 
-      - name: Smoke-test APK installability in Android emulator
+      - name: Run emulator UI and background playback regression suite
         uses: ReactiveCircus/android-emulator-runner@v2
         with:
           api-level: 35

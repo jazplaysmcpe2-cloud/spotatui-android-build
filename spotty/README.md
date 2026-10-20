@@ -32,7 +32,11 @@ Playback-source quality and download-file quality are separate preferences. For 
 
 ## Themes and visual design
 
-The theme selector uses dedicated preview palettes and named art directions. Themes include Frutiger Aero (bright aqua, glossy bubbles, sky-like gradients), Midwest Emo (muted plum/ink), Synthwave (neon grid), Vaporwave (soft digital gradient), Cyberpunk (sharp neon accents), Aurora Forest (green atmospheric glow), AMOLED (true black), Y2K Glass (iridescent blue glass), Candy Pop (bubblegum geometry), Retro CRT (phosphor green/scanlines), Sunset Coast (peach glow), and Dark Academia (warm ink-and-paper tones). Settings/theme dialogs are dismissed before Activity recreation to avoid stale-window failures.
+Spotty's refreshed identity pairs a sound-wave sunrise mark with a blue-to-violet-to-peach gradient: open, bright, a little nostalgic, and deliberately human rather than a generic play triangle. The Discover hero now changes its eyebrow, headline, and art-direction copy with the selected theme. The language aims to be honest about each mood: bright possibility for Frutiger Aero, tender unresolved feeling for Midwest Emo, neon solitude for Synthwave, imperfect nostalgia for Vaporwave, and small acts of warmth inside Cyberpunk's harder surfaces.
+
+Each theme has a visual treatment as well as a palette: Frutiger Aero uses clear-water blues, glossy bubbles and sky light; Midwest Emo has a faint notebook-paper texture; Synthwave and Vaporwave use a receding neon grid; Cyberpunk layers diagonal rain and a cool city glow; Aurora Forest has an atmospheric green bloom; AMOLED stays quiet and near-black; Y2K Glass keeps its iridescent blue reflections; Candy Pop uses soft circles and bubblegum colour; Retro CRT has phosphor scanlines; Sunset Coast has a warm late-day glow; and Dark Academia keeps restrained ink-and-paper lines. The mini-tapes use mood-led names while keeping their underlying search queries intact.
+
+Settings/theme dialogs are dismissed before Activity recreation to avoid stale-window failures. The visual changes do not change provider permissions or make unsupported services appear connected.
 
 ## Provider credentials and limits
 

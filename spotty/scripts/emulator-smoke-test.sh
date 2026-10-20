@@ -22,7 +22,7 @@ HOME_XML="$GITHUB_WORKSPACE/release-output/spotty-home-window.xml"
 PLAYER_XML="$GITHUB_WORKSPACE/release-output/spotty-player-window.xml"
 
 # A headless Android emulator can show a launcher ANR dialog labelled Pixel Launcher or Quickstep
-# over a healthy app. Dismiss that system dialog by locating its Wait button through UIAutomator.
+# over a healthy app. Prefer the dialog's Close app action before falling back to Wait.
 # Spotty's own crash/ANR checks and the real playback-service test remain hard release gates.
 dismiss_launcher_anr_dialog() {
   local attempt=1
@@ -46,21 +46,29 @@ dialog = any("pixel launcher isn't responding" in v or "quickstep isn't respondi
 if not dialog:
     print("none")
     raise SystemExit(0)
-for node, value in zip(nodes, values):
-    if value.strip() == "wait" or value.endswith(" wait"):
-        bounds = [int(n) for n in re.findall(r"\d+", node.attrib.get("bounds", ""))]
-        if len(bounds) == 4:
-            print(str((bounds[0] + bounds[2]) // 2) + "," + str((bounds[1] + bounds[3]) // 2))
-            raise SystemExit(0)
-print("dialog-without-wait-button")
+# Prefer closing a frozen launcher over waiting on it; waiting may re-trigger the same ANR.
+for wanted in ("close app", "wait"):
+    for node, value in zip(nodes, values):
+        if value.strip() == wanted or value.endswith(" " + wanted):
+            bounds = [int(n) for n in re.findall(r"\d+", node.attrib.get("bounds", ""))]
+            if len(bounds) == 4:
+                print(str((bounds[0] + bounds[2]) // 2) + "," +
+                      str((bounds[1] + bounds[3]) // 2) + "," + wanted.replace(" app", ""))
+                raise SystemExit(0)
+print("dialog-without-action-button")
 PY
 )"
     if [ "$action" = "none" ]; then return 0; fi
-    if [[ "$action" =~ ^[0-9]+,[0-9]+$ ]]; then
-      local x y
-      x="$(printf '%s' "$action" | cut -d, -f1)"
-      y="$(printf '%s' "$action" | cut -d, -f2)"
-      echo "[smoke] Dismissing transient Android launcher ANR dialog via Wait (attempt $attempt)"
+    if [[ "$action" =~ ^([0-9]+),([0-9]+),(close|wait)$ ]]; then
+      local x y button
+      x="${BASH_REMATCH[1]}"
+      y="${BASH_REMATCH[2]}"
+      button="${BASH_REMATCH[3]}"
+      if [[ "$button" == "close" ]]; then
+        echo "[smoke] Closing the frozen Android launcher process (attempt $attempt)"
+      else
+        echo "[smoke] Waiting for the Android launcher to recover (attempt $attempt)"
+      fi
       timeout 10s adb shell input tap "$x" "$y" || true
       sleep 2
     else

@@ -266,7 +266,7 @@ public final class MainActivity extends Activity {
         hero.setOrientation(LinearLayout.VERTICAL);
         hero.setPadding(dp(20), dp(17), dp(20), dp(18));
         hero.setBackground(heroDrawable());
-        TextView heroEyebrow = text("A MIXTAPE OUTSIDE THE MAINSTREAM", 9, TEXT, true);
+        TextView heroEyebrow = text(themeEyebrow(), 9, ACCENT, true);
         heroEyebrow.setLetterSpacing(0.12f);
         hero.addView(heroEyebrow);
         TextView headline = text(themeHeadline(), 25, TEXT, true);
@@ -321,11 +321,11 @@ public final class MainActivity extends Activity {
         LinearLayout genres = new LinearLayout(this);
         genres.setOrientation(LinearLayout.HORIZONTAL);
         String[][] mixtapes = {
-                {"01 / AFTER DARK", "Shoegaze · slowcore", "shoegaze slowcore", "☾"},
-                {"02 / SOFT FOCUS", "Dream pop · ambient", "dream pop ambient", "◌"},
-                {"03 / GUITAR WEATHER", "Post-rock · emo", "post-rock emo", "✳"},
-                {"04 / STATIC BLOOM", "Indie · alternative", "indie alternative rock", "⌁"},
-                {"05 / SLOW MOTION", "Bedroom pop · slowcore", "bedroom pop slowcore", "✦"}
+                {"01 / NIGHT DRIVE HOME", "Shoegaze · slowcore", "shoegaze slowcore", "☾"},
+                {"02 / SOFT LANDING", "Dream pop · ambient", "dream pop ambient", "◌"},
+                {"03 / FEEL IT ALL", "Post-rock · emo", "post-rock emo", "✳"},
+                {"04 / SOMETHING BLOOMS", "Indie · alternative", "indie alternative rock", "⌁"},
+                {"05 / SLOW MORNING", "Bedroom pop · slowcore", "bedroom pop slowcore", "✦"}
         };
         for (int i = 0; i < mixtapes.length; i++) {
             final String searchMix = mixtapes[i][2];
@@ -763,18 +763,18 @@ public final class MainActivity extends Activity {
 
     private String themeNarrativeFor(String name) {
         switch (name) {
-            case "Frutiger Aero": return "Aqua glass · blue skies · bubbles and bright early-web optimism";
-            case "Midwest Emo": return "Bedroom shows, diary pages, worn guitar strings";
-            case "Synthwave": return "Neon grids · chrome drums · after-hours energy";
-            case "Vaporwave": return "Lost malls · soft pixels · yesterday's future";
-            case "Cyberpunk": return "Glitched transmissions · hard edges · underground frequencies";
-            case "Aurora Forest": return "Mist, moss and music from the edge of the map";
-            case "AMOLED": return "True black · quiet controls · no visual noise";
-            case "Y2K Glass": return "Iridescent surfaces, soft chrome and digital nostalgia";
-            case "Candy Pop": return "Playful shapes, bubblegum colour and a little chaos";
-            case "Retro CRT": return "Phosphor green, scanlines and late-night broadcasts";
-            case "Sunset Coast": return "Warm haze, peach skies and the last light";
-            case "Dark Academia": return "Ink, paper, old rooms and records worth keeping";
+            case "Frutiger Aero": return "Blue glass, clear water, and the hopeful side of the early web";
+            case "Midwest Emo": return "Fuzzy guitars, marked-up lyrics, feelings that do not resolve neatly";
+            case "Synthwave": return "Violet horizons, chrome reflections, the loneliness and thrill of late nights";
+            case "Vaporwave": return "Quiet shopping malls, faded pastels, a future remembered imperfectly";
+            case "Cyberpunk": return "Wet city streets, acid neon, small acts of humanity in a loud system";
+            case "Aurora Forest": return "Rain-dark moss, northern lights, stillness that feels alive";
+            case "AMOLED": return "True black, gentle green, space to listen without visual noise";
+            case "Y2K Glass": return "Iridescent plastic, soft chrome, a kinder version of tomorrow";
+            case "Candy Pop": return "Bubblegum colour, glossy shapes, playful joy without taking itself too seriously";
+            case "Retro CRT": return "Phosphor glow, scanlines, the warmth of a signal found late at night";
+            case "Sunset Coast": return "Salt air, peach light, dusty drums as the day settles";
+            case "Dark Academia": return "Worn paper, amber lamps, old records and unhurried thought";
             default: return "An independent mix of open catalogues, local files and strange little finds.";
         }
     }
@@ -2584,17 +2584,17 @@ public final class MainActivity extends Activity {
         int[] colors;
         switch (activeTheme) {
             case "Frutiger Aero": colors = new int[]{Color.rgb(106, 215, 241), Color.rgb(188, 242, 250), Color.rgb(250, 255, 255)}; break;
-            case "Midwest Emo": colors = new int[]{Color.rgb(80, 46, 78), Color.rgb(42, 34, 49), Color.rgb(27, 24, 31)}; break;
-            case "Synthwave": colors = new int[]{Color.rgb(107, 31, 125), Color.rgb(42, 20, 71), BG}; break;
-            case "Vaporwave": colors = new int[]{Color.rgb(93, 76, 151), Color.rgb(54, 53, 111), Color.rgb(27, 45, 75)}; break;
+            case "Midwest Emo": colors = new int[]{Color.rgb(104, 59, 91), Color.rgb(51, 38, 55), Color.rgb(25, 22, 31)}; break;
+            case "Synthwave": colors = new int[]{Color.rgb(146, 50, 162), Color.rgb(53, 25, 91), BG}; break;
+            case "Vaporwave": colors = new int[]{Color.rgb(123, 101, 177), Color.rgb(70, 66, 128), Color.rgb(27, 45, 75)}; break;
             case "Cyberpunk": colors = new int[]{Color.rgb(41, 58, 51), Color.rgb(19, 33, 37), Color.BLACK}; break;
-            case "Aurora Forest": colors = new int[]{Color.rgb(48, 120, 91), Color.rgb(17, 63, 55), BG}; break;
+            case "Aurora Forest": colors = new int[]{Color.rgb(66, 145, 108), Color.rgb(20, 70, 61), BG}; break;
             case "AMOLED": colors = new int[]{Color.rgb(28, 28, 35), Color.rgb(8, 8, 10), Color.BLACK}; break;
-            case "Y2K Glass": colors = new int[]{Color.rgb(163, 213, 249), Color.rgb(76, 122, 186), Color.rgb(37, 54, 103)}; break;
-            case "Candy Pop": colors = new int[]{Color.rgb(226, 89, 170), Color.rgb(135, 47, 130), BG}; break;
+            case "Y2K Glass": colors = new int[]{Color.rgb(177, 224, 252), Color.rgb(87, 143, 196), Color.rgb(37, 54, 103)}; break;
+            case "Candy Pop": colors = new int[]{Color.rgb(240, 105, 174), Color.rgb(135, 47, 130), BG}; break;
             case "Retro CRT": colors = new int[]{Color.rgb(28, 79, 46), Color.rgb(12, 41, 28), Color.rgb(4, 20, 14)}; break;
-            case "Sunset Coast": colors = new int[]{Color.rgb(245, 145, 126), Color.rgb(155, 73, 104), BG}; break;
-            case "Dark Academia": colors = new int[]{Color.rgb(96, 71, 45), Color.rgb(53, 44, 34), BG}; break;
+            case "Sunset Coast": colors = new int[]{Color.rgb(255, 167, 143), Color.rgb(155, 73, 104), BG}; break;
+            case "Dark Academia": colors = new int[]{Color.rgb(131, 91, 55), Color.rgb(53, 44, 34), BG}; break;
             default: colors = new int[]{PANEL_ALT, PANEL, BG}; break;
         }
         GradientDrawable d = new GradientDrawable(GradientDrawable.Orientation.TL_BR, colors);
@@ -2605,36 +2605,54 @@ public final class MainActivity extends Activity {
 
     private String themeHeadline() {
         switch (activeTheme) {
-            case "Frutiger Aero": return "The internet felt like sunshine.";
-            case "Midwest Emo": return "Songs for the long way home.";
-            case "Synthwave": return "Midnight looks good on you.";
-            case "Vaporwave": return "A soft glitch in the ordinary.";
-            case "Cyberpunk": return "Find signal in the static.";
-            case "Aurora Forest": return "Get lost. Come back with a song.";
-            case "AMOLED": return "Nothing extra. Just the feeling.";
-            case "Y2K Glass": return "Tomorrow, in full colour.";
-            case "Candy Pop": return "Make your ears feel something.";
-            case "Retro CRT": return "Broadcast from another planet.";
-            case "Sunset Coast": return "Golden-hour soundtracks.";
-            case "Dark Academia": return "For the beautifully overthought.";
+            case "Frutiger Aero": return "A little sunlight for the endless scroll.";
+            case "Midwest Emo": return "For the drive home you don't want to end.";
+            case "Synthwave": return "One more song before the sun comes up.";
+            case "Vaporwave": return "A memory of a future that never arrived.";
+            case "Cyberpunk": return "Keep the signal. Keep yourself.";
+            case "Aurora Forest": return "Let the dark make room for wonder.";
+            case "AMOLED": return "Less light. More room to feel.";
+            case "Y2K Glass": return "The future we imagined, made gentle.";
+            case "Candy Pop": return "Leave a little room for joy.";
+            case "Retro CRT": return "A signal from somewhere familiar.";
+            case "Sunset Coast": return "The last light is still light.";
+            case "Dark Academia": return "Some feelings deserve a whole chapter.";
             default: return "A little less algorithm. A little more feeling.";
+        }
+    }
+
+    private String themeEyebrow() {
+        switch (activeTheme) {
+            case "Frutiger Aero": return "A CLEAR-SKY KIND OF LISTENING";
+            case "Midwest Emo": return "HONEST SONGS, SOFT EDGES";
+            case "Synthwave": return "AFTER DARK, FULL BRIGHT";
+            case "Vaporwave": return "MEMORIES FROM TOMORROW";
+            case "Cyberpunk": return "STAY HUMAN IN THE STATIC";
+            case "Aurora Forest": return "A LITTLE WONDER IN THE WILD";
+            case "AMOLED": return "LESS LIGHT, MORE FEELING";
+            case "Y2K Glass": return "THE FUTURE, HELD GENTLY";
+            case "Candy Pop": return "MAKE ROOM FOR A GOOD THING";
+            case "Retro CRT": return "A SIGNAL WORTH KEEPING";
+            case "Sunset Coast": return "LET THE DAY END SOFTLY";
+            case "Dark Academia": return "SOUNDTRACK FOR THE INNER WORLD";
+            default: return "A MIXTAPE OUTSIDE THE MAINSTREAM";
         }
     }
 
     private String themeNarrative() {
         switch (activeTheme) {
-            case "Frutiger Aero": return "Glossy aqua · glass bubbles · blue skies and clean air";
-            case "Midwest Emo": return "Fuzzy guitars · diary lyrics · 2 a.m. bus rides";
-            case "Synthwave": return "Neon horizons · chrome drums · after-hours energy";
-            case "Vaporwave": return "Lost malls · soft pixels · yesterday's future";
-            case "Cyberpunk": return "Glitched transmissions · underground frequencies";
-            case "Aurora Forest": return "Mist, moss and music from the edge of the map";
-            case "AMOLED": return "A clean listening room, with the lights turned down";
-            case "Y2K Glass": return "Iridescent surfaces, soft chrome and digital nostalgia";
-            case "Candy Pop": return "Playful shapes, vivid covers and a little chaos";
-            case "Retro CRT": return "Scanlines, bootlegs and late-night broadcasts";
-            case "Sunset Coast": return "Warm haze, dusty drums and the last light";
-            case "Dark Academia": return "Ink, paper, old rooms and records worth keeping";
+            case "Frutiger Aero": return "Clear-water blues · luminous glass · clean air and early-web hope";
+            case "Midwest Emo": return "Honest guitar noise · margin notes · tender, unresolved nights";
+            case "Synthwave": return "Violet highways · chrome drums · neon solitude";
+            case "Vaporwave": return "Empty atriums · pastel static · nostalgia with the lights on";
+            case "Cyberpunk": return "Rain-slick metal · electric acid light · human warmth under the noise";
+            case "Aurora Forest": return "Moss after rain · green aurora · quiet paths that still glow";
+            case "AMOLED": return "True black · soft green · an undistracted listening space";
+            case "Y2K Glass": return "Iridescent plastic · sky reflections · optimistic digital nostalgia";
+            case "Candy Pop": return "Bubblegum gloss · playful colour · joy with a mischievous edge";
+            case "Retro CRT": return "Warm phosphor · scanline glow · late-night community radio";
+            case "Sunset Coast": return "Salt air · peach haze · dusty drums and golden-hour calm";
+            case "Dark Academia": return "Worn paper · lamplight · old records and patient attention";
             default: return "An independent mix of open catalogues, local files and strange little finds.";
         }
     }
@@ -3024,6 +3042,29 @@ public final class MainActivity extends Activity {
                     paint.setColor(Color.argb(24, 255, 172, 211));
                     for (int i = 0; i < 6; i++) canvas.drawCircle((i % 3) * w / 2f + w * 0.12f,
                             h * (0.12f + (i / 3) * 0.72f), w * 0.12f, paint);
+                } else if ("Midwest Emo".equals(activeTheme)) {
+                    // A barely-there notebook texture: personal, imperfect, never a literal scrapbook.
+                    paint.setStyle(Paint.Style.STROKE);
+                    paint.setStrokeWidth(Math.max(1f, dp(1)));
+                    paint.setColor(Color.argb(22, 245, 190, 208));
+                    for (float y = dp(42); y < h; y += dp(31)) canvas.drawLine(0, y, w, y, paint);
+                    paint.setColor(Color.argb(28, 245, 190, 208));
+                    canvas.drawLine(w * 0.16f, 0, w * 0.16f, h, paint);
+                } else if ("Cyberpunk".equals(activeTheme)) {
+                    // Slanted rain and a cyan city-glow hint give the dark palette a lived-in atmosphere.
+                    paint.setStyle(Paint.Style.STROKE);
+                    paint.setStrokeWidth(Math.max(1f, dp(1)));
+                    paint.setColor(Color.argb(30, Color.red(ACCENT), Color.green(ACCENT), Color.blue(ACCENT)));
+                    for (int i = -2; i < 16; i++) {
+                        float x = w * i / 13f;
+                        canvas.drawLine(x, 0, x - w * 0.12f, h, paint);
+                    }
+                    paint.setStyle(Paint.Style.FILL);
+                    paint.setShader(new RadialGradient(w * 0.82f, h * 0.2f, w * 0.52f,
+                            new int[]{Color.argb(38, 0, 235, 255), Color.TRANSPARENT},
+                            null, Shader.TileMode.CLAMP));
+                    canvas.drawRect(bounds, paint);
+                    paint.setShader(null);
                 }
                 paint.setStyle(Paint.Style.FILL);
                 paint.setShader(null);
