@@ -167,6 +167,7 @@ jobs:
           path: release-output/
           if-no-files-found: error
           retention-days: 14
+          overwrite: true
 
       - name: Publish Spotty release
         if: success() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
