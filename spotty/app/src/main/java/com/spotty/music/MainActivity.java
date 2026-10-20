@@ -3277,7 +3277,7 @@ public final class MainActivity extends Activity {
         volumeHeader.addView(volumeLabel, new LinearLayout.LayoutParams(0, -2, 1));
         volumeHeader.addView(volumeValue, new LinearLayout.LayoutParams(-2, -2));
         LinearLayout.LayoutParams volumeHeaderLp = new LinearLayout.LayoutParams(-1, -2);
-        volumeHeaderLp.topMargin = dp(5);
+        volumeHeaderLp.topMargin = dp(1);
         content.addView(volumeHeader, volumeHeaderLp);
 
         float savedVolume = getSharedPreferences(PREFS, MODE_PRIVATE).getFloat("player_volume", 1.0f);
@@ -3287,8 +3287,8 @@ public final class MainActivity extends Activity {
         volumeSlider.setMax(100);
         volumeSlider.setProgress(savedVolumePercent);
         volumeSlider.setContentDescription("Playback volume");
-        LinearLayout.LayoutParams volumeSliderLp = new LinearLayout.LayoutParams(-1, dp(36));
-        volumeSliderLp.bottomMargin = dp(8);
+        LinearLayout.LayoutParams volumeSliderLp = new LinearLayout.LayoutParams(-1, dp(24));
+        volumeSliderLp.bottomMargin = dp(1);
         content.addView(volumeSlider, volumeSliderLp);
         volumeSlider.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {
