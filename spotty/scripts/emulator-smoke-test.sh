@@ -430,6 +430,19 @@ timeout 20s adb logcat -c
 echo "[smoke] Launching the debug-only internal WAV test hook"
 timeout 30s adb shell am start -W -n com.spotty.music/.MainActivity --ez spotty_ci_smoke_playback true
 sleep 3
+timeout 20s adb logcat -d -s SpottySmoke:I SpottyPlaybackService:I > "$GITHUB_WORKSPACE/release-output/spotty-playback-hook-diagnostics.txt"
+if ! grep -Fq "playback-hook gate debuggable=true requested=true" "$GITHUB_WORKSPACE/release-output/spotty-playback-hook-diagnostics.txt"; then
+  echo "Debug playback hook did not accept the CI test intent. Diagnostics:"
+  cat "$GITHUB_WORKSPACE/release-output/spotty-playback-hook-diagnostics.txt"
+  exit 1
+fi
+grep -Fq "playback-hook accepted fixtures" "$GITHUB_WORKSPACE/release-output/spotty-playback-hook-diagnostics.txt"
+grep -Fq "playback-hook opened player sheet title=Spotty playback test" "$GITHUB_WORKSPACE/release-output/spotty-playback-hook-diagnostics.txt"
+grep -Fq "playback-started title=Spotty playback test" "$GITHUB_WORKSPACE/release-output/spotty-playback-hook-diagnostics.txt" || {
+  echo "The debug hook showed the player but the media service never confirmed actual playback."
+  cat "$GITHUB_WORKSPACE/release-output/spotty-playback-hook-diagnostics.txt"
+  exit 1
+}
 if ! dismiss_launcher_anr_dialog; then
   echo "Could not clear emulator launcher dialog before background-playback assertions."
   exit 1
