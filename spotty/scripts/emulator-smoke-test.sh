@@ -674,6 +674,7 @@ fi
 timeout 15s adb shell input keyevent 4
 echo "[smoke] Queue ordering, clear-upcoming, and removal passed without removing the active track."
 timeout 20s adb logcat -d -s SpottyPlaybackService:I > "$SERVICE_LOG"
+# Current service versions emit playback-heartbeat=playing; accept either the explicit state or a live position heartbeat.
 if ! grep -Eq "playback-state=playing|playback-heartbeat=playing position-ms=" "$SERVICE_LOG"; then
   echo "The foreground playback service never reported that the real WAV stream started."
   cat "$SERVICE_LOG"
