@@ -1933,7 +1933,7 @@ public final class MainActivity extends Activity {
             playbackQueue.add(shortTrackTwo);
             playbackQueue.add(shortTrackThree);
             playbackQueueIndex = 0;
-            Log.i("SpottySmoke", "test-hook restored-favorites=" + favoriteTracks.size()
+            android.util.Log.i("SpottySmoke", "test-hook restored-favorites=" + favoriteTracks.size()
                     + " saved-current=" + isFavorite(smokeTrack)
                     + " files-dir=" + getFilesDir().getAbsolutePath());
             beginPlayback(smokeTrack);
