@@ -629,6 +629,8 @@ timeout 30s adb shell am start -W -f 0x10008000 -n com.spotty.music/.MainActivit
 sleep 3
 timeout 20s adb shell uiautomator dump /sdcard/spotty-persistence-window.xml >/dev/null 2>&1
 timeout 20s adb pull /sdcard/spotty-persistence-window.xml "$GITHUB_WORKSPACE/release-output/spotty-persistence-window.xml" >/dev/null
+timeout 20s adb logcat -d -s SpottySmoke:I > "$GITHUB_WORKSPACE/release-output/spotty-smoke-diagnostics.txt"
+grep -Fq "test-hook restored-favorites=1 saved-current=true" "$GITHUB_WORKSPACE/release-output/spotty-smoke-diagnostics.txt"
 grep -Fq "SAVED TO YOUR LIBRARY" "$GITHUB_WORKSPACE/release-output/spotty-persistence-window.xml"
 tap_ui_contains "ADD TO PLAYLIST"
 sleep 0.5
