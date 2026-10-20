@@ -1908,7 +1908,11 @@ public final class MainActivity extends Activity {
 
     private void startDebugOnlyPlaybackSmokeIfRequested() {
         boolean debuggable = (getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0;
-        if (!debuggable || !getIntent().getBooleanExtra("spotty_ci_smoke_playback", false)) return;
+        boolean requested = getIntent() != null
+                && getIntent().getBooleanExtra("spotty_ci_smoke_playback", false);
+        android.util.Log.i("SpottySmoke", "playback-hook gate debuggable=" + debuggable
+                + " requested=" + requested + " intent=" + getIntent());
+        if (!debuggable || !requested) return;
         File fixture = new File(getFilesDir(), "spotty-ci-smoke.wav");
         File shortTwo = new File(getFilesDir(), "spotty-ci-short-two.wav");
         File shortThree = new File(getFilesDir(), "spotty-ci-short-three.wav");
@@ -1918,8 +1922,12 @@ public final class MainActivity extends Activity {
                 || !shortThree.isFile() || !shortThree.canRead()
                 || !smartFixture.isFile() || !smartFixture.canRead()) {
             statusText.setText("CI playback fixtures are missing");
+            android.util.Log.e("SpottySmoke", "missing playback fixture(s): long=" + fixture.isFile()
+                    + " second=" + shortTwo.isFile() + " third=" + shortThree.isFile()
+                    + " smart=" + smartFixture.isFile() + " directory=" + getFilesDir());
             return;
         }
+        android.util.Log.i("SpottySmoke", "playback-hook accepted fixtures directory=" + getFilesDir());
         main.postDelayed(() -> {
             Track smokeTrack = new Track("ci-smoke", "Spotty playback test", "Anchor Artist",
                     "Local WAV • CI smoke test", "local",
@@ -1948,8 +1956,12 @@ public final class MainActivity extends Activity {
                     + " saved-current=" + isFavorite(smokeTrack)
                     + " files-dir=" + getFilesDir().getAbsolutePath());
             beginPlayback(smokeTrack);
+            android.util.Log.i("SpottySmoke", "playback-hook started service=" + MusicPlaybackService.hasTrack()
+                    + " playing=" + MusicPlaybackService.isPlaying()
+                    + " current-title=" + MusicPlaybackService.currentTitle());
             // The emulator gate also exercises the actual player sheet, not just the service.
             showPlayerDialog(smokeTrack);
+            android.util.Log.i("SpottySmoke", "playback-hook opened player sheet title=" + smokeTrack.title);
         }, 500L);
     }
 
