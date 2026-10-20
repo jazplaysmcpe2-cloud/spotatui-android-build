@@ -3140,8 +3140,12 @@ public final class MainActivity extends Activity {
         content.addView(favoriteRow, favLp);
 
         playerSeekBar = new SeekBar(this);
-        playerSeekBar.setMax(1);
-        playerSeekBar.setProgress(0);
+        // Seed the real timeline as soon as the player opens. Do not rely exclusively
+        // on the periodic UI ticker: smoke tests intentionally pause it to let
+        // UIAutomator settle, and the seek control must still target real milliseconds.
+        int initialSeekDurationMs = Math.max(1, MusicPlaybackService.currentDuration());
+        playerSeekBar.setMax(initialSeekDurationMs);
+        playerSeekBar.setProgress(Math.min(Math.max(0, MusicPlaybackService.currentPosition()), initialSeekDurationMs));
         LinearLayout.LayoutParams seekLp = new LinearLayout.LayoutParams(-1, dp(32));
         seekLp.topMargin = dp(12);
         content.addView(playerSeekBar, seekLp);
