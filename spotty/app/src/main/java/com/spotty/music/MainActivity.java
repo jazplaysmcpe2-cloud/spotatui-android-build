@@ -4085,9 +4085,13 @@ public final class MainActivity extends Activity {
                 if (item == null) continue;
                 String provider = item.optString("provider", "");
                 String playUrl = item.optString("playUrl", "");
-                // Restore only HTTP(S) sources or user-selected local content URIs.
+                // Persist user-selected content URIs and HTTP(S) sources. CI's private-file fixtures
+                // are also restorable in the debuggable smoke APK, but never in release builds.
+                boolean ciPrivateFixture = (getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0
+                        && "local".equals(provider)
+                        && playUrl.startsWith(getFilesDir().getAbsolutePath() + File.separator);
                 if (!playUrl.isEmpty() && !(playUrl.startsWith("https://") || playUrl.startsWith("http://")
-                        || ("local".equals(provider) && playUrl.startsWith("content://")))) continue;
+                        || ("local".equals(provider) && playUrl.startsWith("content://")) || ciPrivateFixture)) continue;
                 tracks.add(new Track(item.optString("id", ""), item.optString("title", ""),
                         item.optString("artist", ""), item.optString("subtitle", ""),
                         provider, playUrl, item.optString("artworkUrl", ""), item.optString("license", ""),
