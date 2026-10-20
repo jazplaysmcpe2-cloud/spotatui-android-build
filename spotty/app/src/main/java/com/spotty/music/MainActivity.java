@@ -1933,6 +1933,9 @@ public final class MainActivity extends Activity {
             playbackQueue.add(shortTrackTwo);
             playbackQueue.add(shortTrackThree);
             playbackQueueIndex = 0;
+            Log.i("SpottySmoke", "test-hook restored-favorites=" + favoriteTracks.size()
+                    + " saved-current=" + isFavorite(smokeTrack)
+                    + " files-dir=" + getFilesDir().getAbsolutePath());
             beginPlayback(smokeTrack);
             // The emulator gate also exercises the actual player sheet, not just the service.
             showPlayerDialog(smokeTrack);
@@ -3923,15 +3926,27 @@ public final class MainActivity extends Activity {
     }
 
 
+    private boolean isDebugSmokeFixtureUrl(String provider, String url) {
+        if ((getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) == 0
+                || !"local".equals(provider) || url == null || url.isEmpty()) return false;
+        String normalized = url.replace('\\\\', '/');
+        String packageFilesMarker = "/" + getPackageName() + "/files/";
+        if (!(normalized.startsWith("/data/user/") || normalized.startsWith("/data/data/")
+                || normalized.startsWith(getFilesDir().getAbsolutePath() + File.separator))
+                || !normalized.contains(packageFilesMarker)) return false;
+        String name = new File(normalized).getName();
+        return "spotty-ci-smoke.wav".equals(name)
+                || "spotty-ci-short-two.wav".equals(name)
+                || "spotty-ci-short-three.wav".equals(name);
+    }
+
     private String serializeBackgroundQueue(Track current) {
         List<Track> playable = new ArrayList<>();
         for (Track candidate : playbackQueue) {
             if (candidate.playUrl == null || candidate.playUrl.isEmpty()) continue;
             if ("youtube".equals(candidate.provider) || "playlist-entry".equals(candidate.provider)) continue;
             String url = candidate.playUrl;
-            boolean ciPrivateFixture = (getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0
-                    && "local".equals(candidate.provider)
-                    && url.startsWith(getFilesDir().getAbsolutePath() + File.separator);
+            boolean ciPrivateFixture = isDebugSmokeFixtureUrl(candidate.provider, url);
             if (!(url.startsWith("https://") || url.startsWith("http://") || url.startsWith("content://")
                     || ciPrivateFixture)) continue;
             playable.add(candidate);
@@ -3945,9 +3960,7 @@ public final class MainActivity extends Activity {
                 for (int i = 0; i < playbackQueueIndex; i++) {
                     Track candidate = playbackQueue.get(i);
                     String url = candidate.playUrl == null ? "" : candidate.playUrl;
-                    boolean ciPrivateFixture = (getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0
-                            && "local".equals(candidate.provider)
-                            && url.startsWith(getFilesDir().getAbsolutePath() + File.separator);
+                    boolean ciPrivateFixture = isDebugSmokeFixtureUrl(candidate.provider, url);
                     if (!url.isEmpty() && !"youtube".equals(candidate.provider)
                             && !"playlist-entry".equals(candidate.provider)
                             && (url.startsWith("https://") || url.startsWith("http://")
@@ -4087,9 +4100,7 @@ public final class MainActivity extends Activity {
                 String playUrl = item.optString("playUrl", "");
                 // Persist user-selected content URIs and HTTP(S) sources. CI's private-file fixtures
                 // are also restorable in the debuggable smoke APK, but never in release builds.
-                boolean ciPrivateFixture = (getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0
-                        && "local".equals(provider)
-                        && playUrl.startsWith(getFilesDir().getAbsolutePath() + File.separator);
+                boolean ciPrivateFixture = isDebugSmokeFixtureUrl(provider, playUrl);
                 if (!playUrl.isEmpty() && !(playUrl.startsWith("https://") || playUrl.startsWith("http://")
                         || ("local".equals(provider) && playUrl.startsWith("content://")) || ciPrivateFixture)) continue;
                 tracks.add(new Track(item.optString("id", ""), item.optString("title", ""),
