@@ -603,6 +603,24 @@ fi
 echo "[smoke] Screen-off soak passed with $HEARTBEATS live playback heartbeats and foreground service intact."
 timeout 30s adb logcat -d -b main -b system -b events > "$PLAYBACK_LOGCAT"
 
+# Restart without the debug playback hook to verify the edited queue itself persists.
+timeout 20s adb shell am force-stop com.spotty.music
+timeout 20s adb logcat -c
+timeout 30s adb shell am start -W -f 0x10008000 -n com.spotty.music/.MainActivity
+sleep 2
+tap_ui_contains "Queue"
+sleep 0.5
+timeout 20s adb shell uiautomator dump /sdcard/spotty-queue-restored.xml >/dev/null 2>&1
+timeout 20s adb pull /sdcard/spotty-queue-restored.xml "$GITHUB_WORKSPACE/release-output/spotty-queue-restored.xml" >/dev/null
+grep -Fq "Playing queue" "$GITHUB_WORKSPACE/release-output/spotty-queue-restored.xml"
+grep -Fq "Spotty playback test" "$GITHUB_WORKSPACE/release-output/spotty-queue-restored.xml"
+if grep -Fq "Spotty queue second" "$GITHUB_WORKSPACE/release-output/spotty-queue-restored.xml" || grep -Fq "Spotty queue third" "$GITHUB_WORKSPACE/release-output/spotty-queue-restored.xml"; then
+  echo "Edited queue did not restore the saved one-track state after app relaunch."
+  cat "$GITHUB_WORKSPACE/release-output/spotty-queue-restored.xml"
+  exit 1
+fi
+echo "[smoke] Edited queue restored from device preferences after a process restart."
+
 # A fresh debug-only run verifies persisted library/playlist state and repeat behaviour
 # against real short local WAVs; no public streaming endpoint is involved.
 timeout 20s adb shell am force-stop com.spotty.music
