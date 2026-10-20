@@ -21,7 +21,7 @@ WINDOW_XML="$GITHUB_WORKSPACE/release-output/emulator-window.xml"
 HOME_XML="$GITHUB_WORKSPACE/release-output/spotty-home-window.xml"
 PLAYER_XML="$GITHUB_WORKSPACE/release-output/spotty-player-window.xml"
 
-# A no-window Android emulator can occasionally show "Pixel Launcher isn't responding"
+# A headless Android emulator can show a launcher ANR dialog labelled Pixel Launcher or Quickstep
 # over a healthy app. Dismiss that system dialog by locating its Wait button through UIAutomator.
 # Spotty's own crash/ANR checks and the real playback-service test remain hard release gates.
 dismiss_launcher_anr_dialog() {
@@ -42,7 +42,7 @@ except Exception:
     print("unknown")
     raise SystemExit(0)
 values = [(n.attrib.get("text", "") + " " + n.attrib.get("content-desc", "")).strip().lower() for n in nodes]
-dialog = any("pixel launcher isn't responding" in v or "launcher isn't responding" in v for v in values)
+dialog = any("pixel launcher isn't responding" in v or "quickstep isn't responding" in v or "launcher isn't responding" in v for v in values)
 if not dialog:
     print("none")
     raise SystemExit(0)
@@ -60,7 +60,7 @@ PY
       local x y
       x="$(printf '%s' "$action" | cut -d, -f1)"
       y="$(printf '%s' "$action" | cut -d, -f2)"
-      echo "[smoke] Dismissing transient Pixel Launcher ANR dialog via Wait (attempt $attempt)"
+      echo "[smoke] Dismissing transient Android launcher ANR dialog via Wait (attempt $attempt)"
       timeout 10s adb shell input tap "$x" "$y" || true
       sleep 2
     else
@@ -72,8 +72,8 @@ PY
   done
   timeout 15s adb shell uiautomator dump /sdcard/spotty-window-final.xml >/dev/null 2>&1 || true
   timeout 15s adb pull /sdcard/spotty-window-final.xml "$WINDOW_XML" >/dev/null 2>&1 || true
-  if grep -Fqi "Pixel Launcher isn't responding" "$WINDOW_XML" 2>/dev/null; then
-    echo "Pixel Launcher ANR dialog remained visible after dismissal attempts."
+  if grep -Eiq "(Pixel Launcher|Quickstep|Launcher) isn't responding" "$WINDOW_XML" 2>/dev/null; then
+    echo "Android launcher ANR dialog remained visible after dismissal attempts."
     return 1
   fi
   return 0
@@ -97,9 +97,9 @@ echo "[smoke] Checking release APK process, crash logs, and ANRs"
 PID="$(timeout 20s adb shell pidof com.spotty.music | tr -d '\r' || true)"
 timeout 30s adb logcat -d -b main -b system -b events > "$LOGCAT"
 grep -E "FATAL EXCEPTION|ANR in com\\.spotty\\.music|am_anr.*com\\.spotty\\.music|am_crash:.*com\\.spotty\\.music|am_proc_died:.*com\\.spotty\\.music|Input dispatching timed out.*com\\.spotty\\.music|Process: com\\.spotty\\.music" "$LOGCAT" > "$ERROR_LOG" || true
-grep -Ei "ANR in com\\.google\\.android\\.apps\\.nexuslauncher|am_anr.*com\\.google\\.android\\.apps\\.nexuslauncher" "$LOGCAT" > "$SYSTEM_WARNING_LOG" || true
+grep -Ei "ANR in com\\.(google\\.android\\.apps\\.nexuslauncher|android\\.launcher3|android\\.quickstep)|am_anr.*com\\.(google\\.android\\.apps\\.nexuslauncher|android\\.launcher3|android\\.quickstep)" "$LOGCAT" > "$SYSTEM_WARNING_LOG" || true
 if [ -s "$SYSTEM_WARNING_LOG" ]; then
-  echo "[smoke] Warning: Pixel Launcher ANR logged by emulator; checking and dismissing any visible system dialog."
+  echo "[smoke] Warning: Android launcher ANR logged by emulator; checking and dismissing any visible system dialog."
 fi
 
 if [ -z "$PID" ]; then
@@ -120,10 +120,11 @@ if ! dismiss_launcher_anr_dialog; then
 fi
 
 if [ -s "$SYSTEM_WARNING_LOG" ]; then
-  # The headless emulator's Pixel Launcher can repeatedly raise its own ANR window
+  # The headless emulator launcher can repeatedly raise its own ANR window
   # while Spotty is healthy. Stop only that launcher process, then refocus Spotty.
   # Spotty's own crash/ANR checks above and the full UI checks below remain strict.
   echo "[smoke] Recovering from emulator-only Pixel Launcher ANR and refocusing Spotty."
+  timeout 15s adb shell am force-stop com.android.launcher3 || true
   timeout 15s adb shell am force-stop com.google.android.apps.nexuslauncher || true
   timeout 30s adb shell am start -W -n com.spotty.music/.MainActivity
   sleep 2
