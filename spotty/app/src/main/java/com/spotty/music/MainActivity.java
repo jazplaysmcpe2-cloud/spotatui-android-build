@@ -134,6 +134,7 @@ public final class MainActivity extends Activity {
     private String importedPlaylistName = "Imported playlist";
     private String activeTheme = "Frutiger Aero";
     private String activeQuality = "Best available";
+    private String activeDownloadQuality = "Best available";
     private Dialog playerDialog;
     private Dialog settingsDialog;
     private Dialog themeDialog;
@@ -614,6 +615,10 @@ public final class MainActivity extends Activity {
         for (String available : THEME_NAMES) if (available.equals(savedTheme)) knownTheme = true;
         activeTheme = knownTheme ? savedTheme : "Frutiger Aero";
         activeQuality = prefs.getString("quality", "Best available");
+        activeDownloadQuality = prefs.getString("download_quality", "Best available");
+        boolean knownDownloadQuality = false;
+        for (String available : QUALITY_NAMES) if (available.equals(activeDownloadQuality)) knownDownloadQuality = true;
+        if (!knownDownloadQuality) activeDownloadQuality = "Best available";
         switch (activeTheme) {
             case "Midwest Emo":
                 BG = Color.rgb(23, 20, 30); PANEL = Color.rgb(43, 36, 49);
@@ -811,6 +816,7 @@ public final class MainActivity extends Activity {
 
         addSettingsRow(rows, "✧", "Appearance & themes", activeTheme + " · art direction, contrast and surfaces", this::showThemeDialog);
         addSettingsRow(rows, "♫", "Playback quality", activeQuality + " · uses what each source actually provides", this::showQualityDialog);
+        addSettingsRow(rows, "⇩", "Download quality", activeDownloadQuality + " · original files offered by licensed sources", this::showDownloadQualityDialog);
         addSettingsRow(rows, "◷", "Listening stats", "Time listened, track starts and top artists on this device", this::showMusicStatsDialog);
         addSettingsRow(rows, "⇄", "Account connections", "Provider sign-in status and requirements", this::showConnectionsDialog);
         addSettingsRow(rows, "◉", "Background reliability", "Battery and background-running settings for long listening sessions", this::showBackgroundReliabilityDialog);
@@ -1011,6 +1017,25 @@ public final class MainActivity extends Activity {
                     statusText.setText("Quality preference saved • source quality is never artificially upsampled");
                 })
                 .setMessage("Spotty selects the best matching file that a licensed source actually offers. 320 kbps or lossless is not guaranteed for every track.")
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+    private void showDownloadQualityDialog() {
+        int selected = 0;
+        for (int i = 0; i < QUALITY_NAMES.length; i++) {
+            if (QUALITY_NAMES[i].equals(activeDownloadQuality)) selected = i;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("Download quality")
+                .setSingleChoiceItems(QUALITY_NAMES, selected, (dialog, which) -> {
+                    activeDownloadQuality = QUALITY_NAMES[which];
+                    getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                            .putString("download_quality", activeDownloadQuality).apply();
+                    dialog.dismiss();
+                    statusText.setText("Download preference saved • original source files only; no re-encoding");
+                })
+                .setMessage("This preference only selects among original audio files offered by an open-licensed source. Spotty does not transcode, upsample, invent bitrates, or bypass source licences.")
                 .setNegativeButton("Cancel", null)
                 .show();
     }
@@ -3241,6 +3266,37 @@ public final class MainActivity extends Activity {
         content.addView(modeRow, modeRowLp);
         updatePlaybackModeButtons();
 
+        LinearLayout volumeHeader = new LinearLayout(this);
+        volumeHeader.setGravity(Gravity.CENTER_VERTICAL);
+        TextView volumeLabel = text("VOLUME", 10, MUTED, true);
+        volumeLabel.setLetterSpacing(0.10f);
+        TextView volumeValue = text("100%", 10, MUTED, false);
+        volumeValue.setGravity(Gravity.END);
+        volumeHeader.addView(volumeLabel, new LinearLayout.LayoutParams(0, -2, 1));
+        volumeHeader.addView(volumeValue, new LinearLayout.LayoutParams(-2, -2));
+        LinearLayout.LayoutParams volumeHeaderLp = new LinearLayout.LayoutParams(-1, -2);
+        volumeHeaderLp.topMargin = dp(5);
+        content.addView(volumeHeader, volumeHeaderLp);
+
+        float savedVolume = getSharedPreferences(PREFS, MODE_PRIVATE).getFloat("player_volume", 1.0f);
+        int savedVolumePercent = Math.max(0, Math.min(100, Math.round(savedVolume * 100.0f)));
+        volumeValue.setText(savedVolumePercent + "%");
+        SeekBar volumeSlider = new SeekBar(this);
+        volumeSlider.setMax(100);
+        volumeSlider.setProgress(savedVolumePercent);
+        volumeSlider.setContentDescription("Playback volume");
+        LinearLayout.LayoutParams volumeSliderLp = new LinearLayout.LayoutParams(-1, dp(36));
+        volumeSliderLp.bottomMargin = dp(8);
+        content.addView(volumeSlider, volumeSliderLp);
+        volumeSlider.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {
+                volumeValue.setText(progress + "%");
+                if (fromUser) MusicPlaybackService.setVolume(MainActivity.this, progress / 100.0f);
+            }
+            @Override public void onStartTrackingTouch(SeekBar bar) {}
+            @Override public void onStopTrackingTouch(SeekBar bar) {}
+        });
+
         LinearLayout playlistActions = new LinearLayout(this);
         playlistActions.setOrientation(LinearLayout.HORIZONTAL);
         TextView playNextAction = text("＋  PLAY NEXT", 10, TEXT, true);
@@ -3720,23 +3776,23 @@ public final class MainActivity extends Activity {
         return d;
     }
 
-    private int audioFileRank(String name) {
+    private int audioFileRank(String name, String qualityPreference) {
         String n = name.toLowerCase(Locale.ROOT);
         boolean lossless = n.endsWith(".flac") || n.endsWith(".wav") || n.endsWith(".aiff") || n.endsWith(".alac");
-        if ("Prefer lossless".equals(activeQuality)) {
+        if ("Prefer lossless".equals(qualityPreference)) {
             if (n.endsWith(".flac")) return 100;
             if (n.endsWith(".wav") || n.endsWith(".aiff") || n.endsWith(".alac")) return 90;
             if (n.endsWith(".opus")) return 55;
             if (n.endsWith(".ogg")) return 50;
             if (n.endsWith(".m4a") || n.endsWith(".aac")) return 45;
             if (n.endsWith(".mp3")) return 40;
-        } else if ("Balanced (prefer high bitrate)".equals(activeQuality)) {
+        } else if ("Balanced (prefer high bitrate)".equals(qualityPreference)) {
             if (n.endsWith(".mp3")) return 100;
             if (n.endsWith(".opus")) return 95;
             if (n.endsWith(".flac")) return 90;
             if (n.endsWith(".m4a") || n.endsWith(".aac")) return 85;
             if (n.endsWith(".ogg")) return 80;
-        } else if ("Data saver".equals(activeQuality)) {
+        } else if ("Data saver".equals(qualityPreference)) {
             if (n.endsWith(".opus")) return 100;
             if (n.endsWith(".ogg")) return 95;
             if (n.endsWith(".mp3")) return 90;
@@ -3749,12 +3805,16 @@ public final class MainActivity extends Activity {
             if (n.endsWith(".m4a") || n.endsWith(".aac")) return 75;
             if (n.endsWith(".mp3")) return 70;
         }
-        if ("Data saver".equals(activeQuality)) return lossless ? 10 : -1;
-        if ("Balanced (prefer high bitrate)".equals(activeQuality)) return lossless ? 60 : -1;
+        if ("Data saver".equals(qualityPreference)) return lossless ? 10 : -1;
+        if ("Balanced (prefer high bitrate)".equals(qualityPreference)) return lossless ? 60 : -1;
         return lossless ? 90 : -1;
     }
 
     private JSONObject chooseArchiveAudioFile(JSONArray files, boolean forPlayback) {
+        return chooseArchiveAudioFile(files, forPlayback, activeQuality);
+    }
+
+    private JSONObject chooseArchiveAudioFile(JSONArray files, boolean forPlayback, String qualityPreference) {
         JSONObject best = null;
         int bestRank = -1;
         long bestSize = -1;
@@ -3762,11 +3822,11 @@ public final class MainActivity extends Activity {
             JSONObject file = files.optJSONObject(i);
             if (file == null || file.optBoolean("private", false)) continue;
             String name = file.optString("name", "");
-            int rank = audioFileRank(name);
+            int rank = audioFileRank(name, qualityPreference);
             String lowerName = name.toLowerCase(Locale.ROOT);
             boolean lossless = lowerName.endsWith(".flac") || lowerName.endsWith(".wav")
                     || lowerName.endsWith(".aiff") || lowerName.endsWith(".alac");
-            if ("Balanced (prefer high bitrate)".equals(activeQuality)) {
+            if ("Balanced (prefer high bitrate)".equals(qualityPreference)) {
                 // Prefer a lossless original; when none exists, rank a verified 320+ kbps file above
                 // lower-bitrate lossy encodes instead of treating every MP3 as high quality.
                 if (lossless) {
@@ -3826,7 +3886,7 @@ public final class MainActivity extends Activity {
                     throw new Exception("This item has no verifiable Creative Commons/public-domain license. Download blocked.");
                 JSONArray files = response.optJSONArray("files");
                 if (files == null) throw new Exception("No downloadable files were listed.");
-                JSONObject chosen = chooseArchiveAudioFile(files, false);
+                JSONObject chosen = chooseArchiveAudioFile(files, false, activeDownloadQuality);
                 if (chosen == null) throw new Exception("No supported audio file was found.");
                 String name = chosen.optString("name", "");
                 String url = chooseArchiveStreamUrl(track.id, name);

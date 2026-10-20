@@ -24,6 +24,12 @@ The native playback service owns the stream outside the Activity lifecycle. It u
 
 No Android app can guarantee uninterrupted 24/7 playback: the OS may force-stop it, battery management may restrict background activity, and providers can disconnect or remove media. On phones with aggressive battery optimisation, users may need to allow background activity for Spotty.
 
+## Playback and download quality controls
+
+The full player includes a persistent volume slider that controls the same background audio service used for notification playback. Audio-focus ducking temporarily lowers the selected volume and restores the user's preference when focus returns. Volume is stored on-device.
+
+Playback-source quality and download-file quality are separate preferences. For authorized Internet Archive downloads, Spotty uses the download preference to choose among the original files the source exposes. It does not transcode audio or manufacture a lossless/high-bitrate version, and a source may not offer every format. Downloads remain gated by the app's open-licence verification.
+
 ## Themes and visual design
 
 The theme selector uses dedicated preview palettes and named art directions. Themes include Frutiger Aero (bright aqua, glossy bubbles, sky-like gradients), Midwest Emo (muted plum/ink), Synthwave (neon grid), Vaporwave (soft digital gradient), Cyberpunk (sharp neon accents), Aurora Forest (green atmospheric glow), AMOLED (true black), Y2K Glass (iridescent blue glass), Candy Pop (bubblegum geometry), Retro CRT (phosphor green/scanlines), Sunset Coast (peach glow), and Dark Academia (warm ink-and-paper tones). Settings/theme dialogs are dismissed before Activity recreation to avoid stale-window failures.

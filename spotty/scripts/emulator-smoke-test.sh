@@ -350,6 +350,29 @@ for theme in "Y2K Glass" "Midwest Emo" "Retro CRT" "Synthwave" "Frutiger Aero"; 
 done
 echo "[smoke] Five themes including the default were selected; Activity remained alive after each change."
 
+# Download quality is a separate persisted preference from playback quality.
+echo "[smoke] Verifying the independent download-quality preference"
+tap_ui_contains "SETTINGS"
+sleep 1
+tap_ui_contains "Download quality"
+sleep 1
+tap_ui_exact "Data saver"
+sleep 1
+timeout 15s adb shell input keyevent 4
+sleep 1
+tap_ui_contains "SETTINGS"
+sleep 1
+timeout 20s adb shell uiautomator dump /sdcard/spotty-download-quality.xml >/dev/null 2>&1
+timeout 20s adb pull /sdcard/spotty-download-quality.xml "$GITHUB_WORKSPACE/release-output/spotty-download-quality.xml" >/dev/null
+grep -Fq "Download quality" "$GITHUB_WORKSPACE/release-output/spotty-download-quality.xml"
+grep -Fq "Data saver" "$GITHUB_WORKSPACE/release-output/spotty-download-quality.xml"
+tap_ui_contains "Download quality"
+sleep 1
+tap_ui_exact "Best available"
+sleep 1
+timeout 15s adb shell input keyevent 4
+echo "[smoke] Download-quality selection persists independently and is restored to Best available."
+
 # The bottom mini-player must always lead to a usable player, even before a track is chosen.
 tap_ui_contains "Tap to open the player"
 sleep 1
@@ -462,6 +485,8 @@ grep -Fq "Spotty playback test" "$PLAYER_XML"
 grep -Fq "SOURCE" "$PLAYER_XML"
 grep -Fq "ON THIS DEVICE" "$PLAYER_XML"
 grep -Fq 'class="android.widget.SeekBar"' "$PLAYER_XML"
+grep -Fq "VOLUME" "$PLAYER_XML"
+grep -Fq "Playback volume" "$PLAYER_XML"
 grep -Fq "SHUFFLE" "$PLAYER_XML"
 grep -Fq "SMART SHUFFLE" "$PLAYER_XML"
 grep -Fq "REPEAT OFF" "$PLAYER_XML"

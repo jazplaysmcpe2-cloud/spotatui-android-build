@@ -69,6 +69,8 @@ public final class MusicPlaybackService extends Service {
     private long lastStatsPersistElapsed;
     private long lastPlaybackHeartbeatElapsed;
     private long pendingStatsMs;
+    private float userVolume = 1.0f;
+    private boolean audioDucked;
 
     private final Runnable statsTicker = new Runnable() {
         @Override public void run() {
@@ -108,7 +110,8 @@ public final class MusicPlaybackService extends Service {
     private final AudioManager.OnAudioFocusChangeListener focusListener = change -> {
         if (mediaPlayer == null) return;
         if (change == AudioManager.AUDIOFOCUS_GAIN) {
-            mediaPlayer.setVolume(1f, 1f);
+            audioDucked = false;
+            mediaPlayer.setVolume(userVolume, userVolume);
             if (resumeOnFocusGain) {
                 resumeOnFocusGain = false;
                 try {
@@ -119,7 +122,8 @@ public final class MusicPlaybackService extends Service {
                 } catch (IllegalStateException ignored) { scheduleRetry("Audio focus returned"); }
             }
         } else if (change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK) {
-            try { mediaPlayer.setVolume(0.25f, 0.25f); } catch (IllegalStateException ignored) {}
+            audioDucked = true;
+            try { mediaPlayer.setVolume(userVolume * 0.25f, userVolume * 0.25f); } catch (IllegalStateException ignored) {}
         } else if (change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) {
             try {
                 if (mediaPlayer.isPlaying()) {
@@ -169,6 +173,29 @@ public final class MusicPlaybackService extends Service {
     public static void stop(Context context) {
         MusicPlaybackService service = instance;
         if (service != null) service.stopPlaybackAndSelf();
+    }
+
+    public static void setVolume(Context context, float requestedVolume) {
+        if (context == null) return;
+        float bounded = clampVolume(requestedVolume);
+        context.getSharedPreferences("spotty_preferences", Context.MODE_PRIVATE)
+                .edit().putFloat("player_volume", bounded).apply();
+        MusicPlaybackService service = instance;
+        if (service != null) service.handler.post(() -> service.applyUserVolume(bounded));
+    }
+
+    private static float clampVolume(float value) {
+        if (Float.isNaN(value) || Float.isInfinite(value)) return 1.0f;
+        return Math.max(0.0f, Math.min(1.0f, value));
+    }
+
+    private void applyUserVolume(float requestedVolume) {
+        userVolume = clampVolume(requestedVolume);
+        if (mediaPlayer != null) {
+            float effectiveVolume = userVolume * (audioDucked ? 0.25f : 1.0f);
+            try { mediaPlayer.setVolume(effectiveVolume, effectiveVolume); }
+            catch (IllegalStateException ignored) {}
+        }
     }
 
     public static void updateQueue(Context context, String queueJson, int index, String repeatMode) {
@@ -280,6 +307,7 @@ public final class MusicPlaybackService extends Service {
     @Override public void onCreate() {
         super.onCreate();
         instance = this;
+        userVolume = clampVolume(getPreferences().getFloat("player_volume", 1.0f));
         createNotificationChannel();
         audioManager = (AudioManager) getSystemService(AUDIO_SERVICE);
         PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
@@ -432,6 +460,7 @@ public final class MusicPlaybackService extends Service {
         setState("connecting", retryCount == 0 ? "Connecting" : "Reconnecting");
         MediaPlayer next = new MediaPlayer();
         mediaPlayer = next;
+        next.setVolume(userVolume, userVolume);
         next.setAudioAttributes(new AudioAttributes.Builder()
                 .setUsage(AudioAttributes.USAGE_MEDIA)
                 .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
@@ -443,6 +472,8 @@ public final class MusicPlaybackService extends Service {
             retryScheduled = false;
             handler.removeCallbacks(retryRunnable);
             try {
+                float effectiveVolume = userVolume * (audioDucked ? 0.25f : 1.0f);
+                mp.setVolume(effectiveVolume, effectiveVolume);
                 mp.start();
                 Log.i("SpottyPlaybackService", "playback-started title=" + currentTitle
                         + " queue-index=" + queueIndex);
