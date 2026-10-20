@@ -22,7 +22,7 @@ HOME_XML="$GITHUB_WORKSPACE/release-output/spotty-home-window.xml"
 PLAYER_XML="$GITHUB_WORKSPACE/release-output/spotty-player-window.xml"
 
 # A headless Android emulator can show a launcher ANR dialog labelled Pixel Launcher or Quickstep
-# over a healthy app. Dismiss that system dialog by locating its Wait button through UIAutomator.
+# over a healthy app. Prefer the dialog's Close app action before falling back to Wait.
 # Spotty's own crash/ANR checks and the real playback-service test remain hard release gates.
 dismiss_launcher_anr_dialog() {
   local attempt=1
