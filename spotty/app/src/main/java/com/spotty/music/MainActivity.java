@@ -1912,22 +1912,33 @@ public final class MainActivity extends Activity {
         File fixture = new File(getFilesDir(), "spotty-ci-smoke.wav");
         File shortTwo = new File(getFilesDir(), "spotty-ci-short-two.wav");
         File shortThree = new File(getFilesDir(), "spotty-ci-short-three.wav");
+        File smartFixture = new File(getFilesDir(), "spotty-ci-short-smart.wav");
         if (!fixture.isFile() || !fixture.canRead()
                 || !shortTwo.isFile() || !shortTwo.canRead()
-                || !shortThree.isFile() || !shortThree.canRead()) {
+                || !shortThree.isFile() || !shortThree.canRead()
+                || !smartFixture.isFile() || !smartFixture.canRead()) {
             statusText.setText("CI playback fixtures are missing");
             return;
         }
         main.postDelayed(() -> {
-            Track smokeTrack = new Track("ci-smoke", "Spotty playback test", "Local test tone",
+            Track smokeTrack = new Track("ci-smoke", "Spotty playback test", "Anchor Artist",
                     "Local WAV • CI smoke test", "local",
-                    fixture.getAbsolutePath(), "", "generated test tone");
-            Track shortTrackTwo = new Track("ci-smoke-2", "Spotty queue second", "Local test tone",
+                    fixture.getAbsolutePath(), "", "generated test tone", "Anchor Album", "Shoegaze", "CI Mix");
+            Track shortTrackTwo = new Track("ci-smoke-2", "Spotty queue second", "Neighbor Artist",
                     "Short local WAV • CI repeat test", "local",
-                    shortTwo.getAbsolutePath(), "", "generated test tone");
-            Track shortTrackThree = new Track("ci-smoke-3", "Spotty queue third", "Local test tone",
+                    shortTwo.getAbsolutePath(), "", "generated test tone", "Neighbor Album", "Shoegaze", "CI Mix");
+            Track shortTrackThree = new Track("ci-smoke-3", "Spotty queue third", "Different Artist",
                     "Short local WAV • CI repeat test", "local",
-                    shortThree.getAbsolutePath(), "", "generated test tone");
+                    shortThree.getAbsolutePath(), "", "generated test tone", "Different Album", "Ambient", "CI Mix");
+            Track smartSuggestion = new Track("ci-smart", "Spotty smart suggestion", "Neighbor Artist",
+                    "Short local WAV • CI smart-shuffle test", "local",
+                    smartFixture.getAbsolutePath(), "", "generated test tone", "Neighbor Album", "Shoegaze", "CI Mix");
+            Track duplicateSmartSuggestion = new Track("ci-smart-duplicate", "Spotty smart suggestion duplicate",
+                    "Neighbor Artist", "Duplicate URL • CI smart-shuffle test", "local",
+                    smartFixture.getAbsolutePath(), "", "generated test tone", "Neighbor Album", "Shoegaze", "CI Mix");
+            visibleTracks.clear();
+            visibleTracks.add(smartSuggestion);
+            visibleTracks.add(duplicateSmartSuggestion);
             playbackQueue = new ArrayList<>();
             playbackQueue.add(smokeTrack);
             playbackQueue.add(shortTrackTwo);
@@ -3937,7 +3948,8 @@ public final class MainActivity extends Activity {
         String name = new File(normalized).getName();
         return "spotty-ci-smoke.wav".equals(name)
                 || "spotty-ci-short-two.wav".equals(name)
-                || "spotty-ci-short-three.wav".equals(name);
+                || "spotty-ci-short-three.wav".equals(name)
+                || "spotty-ci-short-smart.wav".equals(name);
     }
 
     private String serializeBackgroundQueue(Track current) {
@@ -4261,7 +4273,17 @@ public final class MainActivity extends Activity {
                         break;
                     }
                 }
-                if (!alreadyQueued) suggestions.add(candidate);
+                boolean alreadySuggested = false;
+                if (!alreadyQueued) {
+                    for (Track suggested : suggestions) {
+                        if (sameTrack(suggested, candidate)
+                                || (!candidate.playUrl.isEmpty() && candidate.playUrl.equals(suggested.playUrl))) {
+                            alreadySuggested = true;
+                            break;
+                        }
+                    }
+                }
+                if (!alreadyQueued && !alreadySuggested) suggestions.add(candidate);
             }
             if (anchor != null) {
                 final Track reference = anchor;
@@ -4271,10 +4293,26 @@ public final class MainActivity extends Activity {
             }
         }
 
-        Collections.shuffle(upcoming);
         if ("smart".equals(shuffleMode) && anchor != null) {
             final Track reference = anchor;
             upcoming.sort((a, b) -> Integer.compare(smartShuffleScore(b, reference), smartShuffleScore(a, reference)));
+            // Preserve the relevance ranking, but randomize tracks within equally relevant tiers.
+            // Shuffling first and sorting afterwards was deterministic and erased shuffle variety.
+            List<Track> variedUpcoming = new ArrayList<>();
+            int tierStart = 0;
+            while (tierStart < upcoming.size()) {
+                int tierScore = smartShuffleScore(upcoming.get(tierStart), reference);
+                int tierEnd = tierStart + 1;
+                while (tierEnd < upcoming.size()
+                        && smartShuffleScore(upcoming.get(tierEnd), reference) == tierScore) tierEnd++;
+                List<Track> tier = new ArrayList<>(upcoming.subList(tierStart, tierEnd));
+                Collections.shuffle(tier);
+                variedUpcoming.addAll(tier);
+                tierStart = tierEnd;
+            }
+            upcoming = variedUpcoming;
+        } else {
+            Collections.shuffle(upcoming);
         }
         while (playbackQueue.size() > start) playbackQueue.remove(playbackQueue.size() - 1);
         playbackQueue.addAll(upcoming);
