@@ -1993,6 +1993,16 @@ public final class MainActivity extends Activity {
                     playerToggleView.setText("connecting".equals(state) ? "…" : (needsExternalPlayback(activePlayerSelection) ? "↗" : ("playing".equals(state) ? "Ⅱ" : "▶")));
                 }
                 if ("playing".equals(state)) {
+                    // The service may finish preparing after the player sheet first appears.
+                    // Seed the timeline on the first real playing broadcast as well as on open,
+                    // so a paused UI ticker never leaves the seek bar with a placeholder max.
+                    if (playerSeekBar != null) {
+                        int durationMs = MusicPlaybackService.currentDuration();
+                        if (durationMs > 0) {
+                            playerSeekBar.setMax(durationMs);
+                            playerSeekBar.setProgress(Math.min(Math.max(0, MusicPlaybackService.currentPosition()), durationMs));
+                        }
+                    }
                     preparing = false; paused = false;
                     if (playPauseButton != null) playPauseButton.setText("Ⅱ");
                     if (statusText != null) statusText.setText("Playing in background • " + (message == null ? "" : message));
