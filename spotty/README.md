@@ -55,7 +55,7 @@ cd spotty
 gradle --no-daemon :app:assembleDebug :app:assembleRelease
 ```
 
-The GitHub Actions workflow builds both variants and runs an Android emulator smoke test, including a real local WAV playback check through the background service. Pull-request builds may use a debug-signed APK for CI only. Publishing from `main` is blocked unless the same four persistent signing secrets are configured under **GitHub Settings → Secrets and variables → Actions → New repository secret**:
+The GitHub Actions workflow builds both variants and runs an Android emulator smoke test, including a real local WAV playback check through the background service. Pull-request builds may use a debug-signed APK for CI only. Re-running a workflow replaces the artifact from the prior attempt with the latest APK and diagnostics, rather than leaving a stale file under the same run number. Publishing from `main` is blocked unless the same four persistent signing secrets are configured under **GitHub Settings → Secrets and variables → Actions → New repository secret**:
 
 - `ANDROID_KEYSTORE_BASE64`: base64 of the long-term JKS keystore, on one line.
 - `ANDROID_KEYSTORE_PASSWORD`: keystore password.
