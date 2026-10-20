@@ -3929,7 +3929,7 @@ public final class MainActivity extends Activity {
     private boolean isDebugSmokeFixtureUrl(String provider, String url) {
         if ((getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) == 0
                 || !"local".equals(provider) || url == null || url.isEmpty()) return false;
-        String normalized = url.replace('\\\\', '/');
+        String normalized = url.replace('\\', '/');
         String packageFilesMarker = "/" + getPackageName() + "/files/";
         if (!(normalized.startsWith("/data/user/") || normalized.startsWith("/data/data/")
                 || normalized.startsWith(getFilesDir().getAbsolutePath() + File.separator))
