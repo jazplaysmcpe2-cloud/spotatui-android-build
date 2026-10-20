@@ -480,13 +480,21 @@ timeout 20s adb logcat -d -s SpottyPlaybackService:I > "$GITHUB_WORKSPACE/releas
 grep -Fq "playback-state=playing" "$GITHUB_WORKSPACE/release-output/player-resume-log.txt"
 echo "[smoke] Pause and resume changed the real media-service state."
 
-# Heartbeats are rate-limited by the service, so leave enough time to sample a true baseline.
-# Drag the actual SeekBar and verify the decoded audio position jumps forward.
+# Heartbeats are rate-limited to one every 15 seconds; poll for a fresh baseline instead
+# of assuming one will appear immediately after clearing logcat.
 timeout 20s adb logcat -c
-sleep 6
-timeout 20s adb logcat -d -s SpottyPlaybackService:I > "$GITHUB_WORKSPACE/release-output/player-seek-before.log"
-BASE_POSITION="$(awk -F'position-ms=' '/playback-heartbeat=playing position-ms=/ { value=$2; sub(/[^0-9].*/, "", value); if (value ~ /^[0-9]+$/) latest=value } END { if (latest != "") print latest }' "$GITHUB_WORKSPACE/release-output/player-seek-before.log")"
-[[ "$BASE_POSITION" =~ ^[0-9]+$ ]]
+BASE_POSITION=""
+for attempt in $(seq 1 15); do
+  sleep 2
+  timeout 20s adb logcat -d -s SpottyPlaybackService:I > "$GITHUB_WORKSPACE/release-output/player-seek-before.log"
+  BASE_POSITION="$(awk -F'position-ms=' '/playback-heartbeat=playing position-ms=/ { value=$2; sub(/[^0-9].*/, "", value); if (value ~ /^[0-9]+$/) latest=value } END { if (latest != "") print latest }' "$GITHUB_WORKSPACE/release-output/player-seek-before.log")"
+  [[ "$BASE_POSITION" =~ ^[0-9]+$ ]] && break
+done
+if [[ ! "$BASE_POSITION" =~ ^[0-9]+$ ]]; then
+  echo "No fresh playback-position heartbeat was emitted before the seek test."
+  cat "$GITHUB_WORKSPACE/release-output/player-seek-before.log"
+  exit 1
+fi
 timeout 20s adb shell uiautomator dump /sdcard/spotty-seek-window.xml >/dev/null 2>&1
 timeout 20s adb pull /sdcard/spotty-seek-window.xml "$GITHUB_WORKSPACE/release-output/spotty-seek-window.xml" >/dev/null
 IFS=',' read -r SEEK_X1 SEEK_Y SEEK_X2 <<< "$(python3 - "$GITHUB_WORKSPACE/release-output/spotty-seek-window.xml" <<'PY'
@@ -506,9 +514,15 @@ print(f"{left + (right-left)//10},{y},{left + (right-left)*65//100}")
 PY
 )"
 timeout 15s adb shell input swipe "$SEEK_X1" "$SEEK_Y" "$SEEK_X2" "$SEEK_Y" 500
-sleep 6
-timeout 20s adb logcat -d -s SpottyPlaybackService:I > "$GITHUB_WORKSPACE/release-output/player-seek-after.log"
-SEEK_POSITION="$(awk -F'position-ms=' '/playback-heartbeat=playing position-ms=/ { value=$2; sub(/[^0-9].*/, "", value); if (value ~ /^[0-9]+$/) latest=value } END { if (latest != "") print latest }' "$GITHUB_WORKSPACE/release-output/player-seek-after.log")"
+SEEK_POSITION=""
+for attempt in $(seq 1 15); do
+  sleep 2
+  timeout 20s adb logcat -d -s SpottyPlaybackService:I > "$GITHUB_WORKSPACE/release-output/player-seek-after.log"
+  SEEK_POSITION="$(awk -F'position-ms=' '/playback-heartbeat=playing position-ms=/ { value=$2; sub(/[^0-9].*/, "", value); if (value ~ /^[0-9]+$/) latest=value } END { if (latest != "") print latest }' "$GITHUB_WORKSPACE/release-output/player-seek-after.log")"
+  if [[ "$SEEK_POSITION" =~ ^[0-9]+$ ]] && (( SEEK_POSITION - BASE_POSITION >= 60000 )); then
+    break
+  fi
+done
 if [[ ! "$SEEK_POSITION" =~ ^[0-9]+$ ]] || (( SEEK_POSITION - BASE_POSITION < 60000 )); then
   echo "Seek did not move the actual playback position forward by at least 60 seconds (before=$BASE_POSITION after=$SEEK_POSITION)."
   cat "$GITHUB_WORKSPACE/release-output/player-seek-after.log"
