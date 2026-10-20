@@ -1026,8 +1026,11 @@ public final class MainActivity extends Activity {
         for (int i = 0; i < QUALITY_NAMES.length; i++) {
             if (QUALITY_NAMES[i].equals(activeDownloadQuality)) selected = i;
         }
+        // Android AlertDialog cannot reliably present a single-choice list and a message
+        // at the same time on this layout: the message panel can replace the list.
+        // Keep the explanation in the Settings row/README and let the actual choices remain visible.
         new AlertDialog.Builder(this)
-                .setTitle("Download quality")
+                .setTitle("Download quality · source files only")
                 .setSingleChoiceItems(QUALITY_NAMES, selected, (dialog, which) -> {
                     activeDownloadQuality = QUALITY_NAMES[which];
                     getSharedPreferences(PREFS, MODE_PRIVATE).edit()
@@ -1035,7 +1038,6 @@ public final class MainActivity extends Activity {
                     dialog.dismiss();
                     statusText.setText("Download preference saved • original source files only; no re-encoding");
                 })
-                .setMessage("This preference only selects among original audio files offered by an open-licensed source. Spotty does not transcode, upsample, invent bitrates, or bypass source licences.")
                 .setNegativeButton("Cancel", null)
                 .show();
     }
