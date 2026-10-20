@@ -480,9 +480,10 @@ timeout 20s adb logcat -d -s SpottyPlaybackService:I > "$GITHUB_WORKSPACE/releas
 grep -Fq "playback-state=playing" "$GITHUB_WORKSPACE/release-output/player-resume-log.txt"
 echo "[smoke] Pause and resume changed the real media-service state."
 
+# Heartbeats are rate-limited by the service, so leave enough time to sample a true baseline.
 # Drag the actual SeekBar and verify the decoded audio position jumps forward.
 timeout 20s adb logcat -c
-sleep 2
+sleep 6
 timeout 20s adb logcat -d -s SpottyPlaybackService:I > "$GITHUB_WORKSPACE/release-output/player-seek-before.log"
 BASE_POSITION="$(awk -F'position-ms=' '/playback-heartbeat=playing position-ms=/ { value=$2; sub(/[^0-9].*/, "", value); if (value ~ /^[0-9]+$/) latest=value } END { if (latest != "") print latest }' "$GITHUB_WORKSPACE/release-output/player-seek-before.log")"
 [[ "$BASE_POSITION" =~ ^[0-9]+$ ]]
@@ -505,7 +506,7 @@ print(f"{left + (right-left)//10},{y},{left + (right-left)*65//100}")
 PY
 )"
 timeout 15s adb shell input swipe "$SEEK_X1" "$SEEK_Y" "$SEEK_X2" "$SEEK_Y" 500
-sleep 2
+sleep 6
 timeout 20s adb logcat -d -s SpottyPlaybackService:I > "$GITHUB_WORKSPACE/release-output/player-seek-after.log"
 SEEK_POSITION="$(awk -F'position-ms=' '/playback-heartbeat=playing position-ms=/ { value=$2; sub(/[^0-9].*/, "", value); if (value ~ /^[0-9]+$/) latest=value } END { if (latest != "") print latest }' "$GITHUB_WORKSPACE/release-output/player-seek-after.log")"
 if [[ ! "$SEEK_POSITION" =~ ^[0-9]+$ ]] || (( SEEK_POSITION - BASE_POSITION < 60000 )); then
